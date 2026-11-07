@@ -89,7 +89,18 @@ test('a surviving OpenCode backend cleans its bridge when the recorded desktop p
     const exited = once(desktop, 'exit');
     desktop.kill();
     await exited;
-    await cleanup;
+    // The bridge's unref'ed watcher cannot keep the test process alive by itself.
+    const deadline = new AbortController();
+    try {
+      await Promise.race([
+        cleanup,
+        delay(4_000, undefined, { signal: deadline.signal }).then(() => {
+          assert.fail('The bridge did not clean up after the desktop exited.');
+        }),
+      ]);
+    } finally {
+      deadline.abort();
+    }
     assert.equal(stopped, 1);
     await assert.rejects(access(state.dir), { code: 'ENOENT' });
   });
