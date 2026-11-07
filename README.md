@@ -4,9 +4,9 @@
 
 Uses Apple Foundation Models and Private Cloud Compute (PCC) to route OpenCode requests and select the model and reasoning effort of a Codex subagent.
 
-## How it uses `fm serve`
+## How routing works
 
-The router starts `fm serve` in a hidden Terminal window on the Mac. The bridge sends routing requests to Apple PCC. The selected provider runs the task's model inference.
+The router opens a temporary Terminal window and runs `fm respond --model pcc` once per routing decision. It supplies the routing input in a private transcript file and closes the window after the call. The selected provider runs the task's model inference.
 
 ### OpenCode
 
@@ -15,7 +15,7 @@ The router starts `fm serve` in a hidden Terminal window on the Mac. The bridge 
   <img alt="OpenCode routing across local macOS, Apple PCC, and the selected provider" src="docs/architecture-opencode.png">
 </picture>
 
-OpenCode applies the route to the current session and reuses the server while the plugin is loaded. Quitting OpenCode Desktop closes the router's server and Terminal window. Terminal itself quits only if the router launched it and no windows remain.
+OpenCode uses the current chat's recent history and keeps routing state keyed to that chat. A validated route is applied to the current session. Deleting a chat clears its local routing state.
 
 ### Codex
 
@@ -24,7 +24,7 @@ OpenCode applies the route to the current session and reuses the server while th
   <img alt="Codex delegation through the local prompt hook and router, Apple PCC, and the selected model service" src="docs/architecture-codex.png">
 </picture>
 
-The Codex helper starts the server when the parent requests a subagent route and shuts it down after selection.
+The Codex helper runs when the parent requests a subagent route. It reuses recent delegation descriptions from the same Codex thread when a thread ID is available.
 
 ## Requirements
 
@@ -41,7 +41,7 @@ cd fm-pcc-router
 node install.mjs
 ```
 
-Choose **OpenCode**, **Codex**, or **both** when prompted. To skip the prompt, pass `--target opencode`, `--target codex`, or `--target both`.
+Choose **OpenCode**, **Codex**, or **both** when prompted. To skip the prompt, pass `--target opencode`, `--target codex`, or `--target both`. To upgrade an existing installation, run `node install.mjs --uninstall` for the affected hosts before installing the new version.
 
 ### After installation
 
@@ -78,7 +78,9 @@ Run `/pcc-test` in an OpenCode chat to check PCC connectivity. This diagnostic d
 
 ## Privacy
 
-For routing, OpenCode sends the current request and limited recent conversation text. Codex sends the delegation message or the task explicitly supplied to `fm-pcc-router`. Both send eligible model metadata to Apple PCC. The router does not read attachments, repository files, or Codex transcripts. Keep sensitive content out of delegation messages and use the automatic hook only where sending task text to Apple PCC is permitted.
+For routing, OpenCode sends the current request and limited recent conversation text. Codex sends the current delegation description and any bounded history of prior delegations from the same thread. Both send eligible model metadata to Apple PCC. The router does not read attachments, repository files, or Codex transcripts. Keep sensitive content out of delegation messages and use the automatic hook only where sending task text to Apple PCC is permitted.
+
+Routing records are stored locally under `$XDG_STATE_HOME/fm-pcc-router/sessions` (default `~/.local/state/fm-pcc-router/sessions`). The saved context is limited to eight entries and 6,000 UTF-8 bytes per chat. The router ignores records older than seven days. To clear all saved routing history, remove this directory while the router is idle.
 
 ## Removal
 

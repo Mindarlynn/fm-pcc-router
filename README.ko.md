@@ -4,9 +4,9 @@
 
 Apple Foundation Models와 Private Cloud Compute(PCC)를 이용해 OpenCode 요청을 라우팅하고, Codex 작업을 맡을 서브에이전트의 모델과 추론 강도를 선택합니다.
 
-## `fm serve` 사용 방식
+## 라우팅 방식
 
-라우터는 Mac의 숨겨진 Terminal 창에서 `fm serve`를 실행해 Apple PCC에 라우팅을 요청합니다. 작업의 모델 추론은 선택된 provider가 실행합니다.
+라우터는 모델을 선택할 때만 임시 Terminal 창에서 `fm respond --model pcc`를 한 번 실행합니다. 입력은 비공개 transcript 파일로 전달하고, 호출이 끝나면 창을 닫습니다. 작업의 모델 추론은 선택된 provider가 실행합니다.
 
 ### OpenCode
 
@@ -15,7 +15,7 @@ Apple Foundation Models와 Private Cloud Compute(PCC)를 이용해 OpenCode 요�
   <img alt="로컬 macOS, Apple PCC, 선택된 provider 사이의 OpenCode 라우팅 경로" src="docs/architecture-opencode.png">
 </picture>
 
-OpenCode는 현재 세션에 선택된 모델을 적용하고, 플러그인이 로드된 동안 서버를 재사용합니다. OpenCode 데스크톱 앱을 종료하면 라우터가 띄운 서버와 Terminal 창도 닫힙니다. 라우터가 Terminal을 처음 실행했고 열린 창이 하나도 없을 때만 Terminal 앱도 종료됩니다.
+OpenCode는 현재 채팅의 최근 기록을 사용하고, 라우팅 상태를 채팅별로 관리합니다. 검증된 모델은 현재 세션에 적용됩니다. 채팅을 삭제하면 해당 로컬 라우팅 기록도 삭제됩니다.
 
 ### Codex
 
@@ -24,7 +24,7 @@ OpenCode는 현재 세션에 선택된 모델을 적용하고, 플러그인이 �
   <img alt="로컬 제출 훅과 라우터, Apple PCC, 선택된 모델 서비스를 연결하는 Codex 위임 경로" src="docs/architecture-codex.png">
 </picture>
 
-Codex 도구는 서브에이전트 라우팅을 요청할 때 서버를 띄우고 모델을 고른 뒤 종료합니다.
+Codex 도구는 상위 에이전트가 서브에이전트 라우팅을 요청할 때 실행됩니다. 스레드 ID가 있으면 같은 Codex 채팅의 최근 위임 설명을 재사용합니다.
 
 ## 요구사항
 
@@ -41,7 +41,7 @@ cd fm-pcc-router
 node install.mjs
 ```
 
-메뉴에서 **OpenCode**, **Codex**, **둘 다** 중에서 고릅니다. 메뉴를 건너뛰려면 `--target opencode`, `--target codex`, `--target both` 중 하나를 지정합니다.
+메뉴에서 **OpenCode**, **Codex**, **둘 다** 중에서 고릅니다. 메뉴를 건너뛰려면 `--target opencode`, `--target codex`, `--target both` 중 하나를 지정합니다. 기존 설치를 업데이트하려면 먼저 `node install.mjs --uninstall`로 해당 앱의 라우터를 제거한 뒤 설치합니다.
 
 ### 설치 후
 
@@ -78,7 +78,9 @@ OpenCode 채팅에서 `/pcc-test`를 입력하면 PCC 연결을 확인할 수 �
 
 ## 데이터 처리
 
-OpenCode는 라우팅을 위해 현재 요청과 제한된 최근 대화 텍스트를 보냅니다. Codex는 위임 메시지나 `fm-pcc-router`에 명시한 작업을 보냅니다. 두 앱 모두 Apple PCC에 후보 모델 정보를 전달합니다. 라우터는 첨부 파일, 저장소 파일, Codex 대화 기록을 읽지 않습니다. 위임 메시지에 민감한 내용을 넣지 말고, Apple PCC로 작업 텍스트를 전송할 수 있는 환경에서 자동 훅을 사용합니다.
+OpenCode는 라우팅을 위해 현재 요청과 제한된 최근 대화 텍스트를 보냅니다. Codex는 현재 위임 설명과 같은 채팅의 제한된 최근 위임 설명을 보냅니다. 두 앱 모두 Apple PCC에 후보 모델 정보를 전달합니다. 라우터는 첨부 파일, 저장소 파일, Codex 대화 기록을 읽지 않습니다. 위임 메시지에 민감한 내용을 넣지 말고, Apple PCC로 작업 텍스트를 전송할 수 있는 환경에서 자동 훅을 사용합니다.
+
+라우팅 기록은 로컬의 `$XDG_STATE_HOME/fm-pcc-router/sessions`에 저장됩니다(기본값은 `~/.local/state/fm-pcc-router/sessions`). 채팅마다 최대 8개 항목과 UTF-8 6,000바이트를 보관하며, 7일이 지난 기록은 재사용하지 않습니다. 전체 라우팅 기록을 지우려면 라우터를 사용하지 않는 동안 이 디렉터리를 삭제합니다.
 
 ## 제거
 

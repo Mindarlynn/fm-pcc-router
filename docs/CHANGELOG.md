@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
+
+### Routing transport
+
+- Run one-shot `fm respond` calls in a temporary Terminal window and close the window after each routing decision.
+- Track bounded transcript state by host and chat. Restore OpenCode context from the current chat and keep only delegation descriptions for Codex.
+- Validate the PCC decision before updating local state and reuse validated results for duplicate OpenCode prompt events.
 
 ### Installation and removal
 
@@ -15,7 +21,7 @@
 
 ### Documentation and licensing
 
-- Add separate OpenCode and Codex architecture diagrams that show how each integration uses `fm serve`.
+- Add separate OpenCode and Codex architecture diagrams that show the one-shot PCC call and local chat state.
 - License FM PCC Router under MIT and include the license with the installed skill and both integrations.
 
 ## 0.4.0
