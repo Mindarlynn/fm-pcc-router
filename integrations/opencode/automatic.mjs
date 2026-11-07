@@ -93,6 +93,15 @@ export async function registerAutomaticRouter(ctx, bridge, options = {}) {
         'session.inbox.cancelled', 'session.deleted',
       ] })) {
         const sid = event.data?.sessionID;
+        if (event.type === 'session.deleted' && typeof sid === 'string' && sid) {
+          reservations.delete(sid);
+          try {
+            await bridge.forget({ host: 'opencode', sessionID: sid });
+          } catch {
+            console.error('FM PCC Router could not remove a deleted chat’s local routing state.');
+          }
+          continue;
+        }
         const reservation = reservations.get(sid);
         if (!reservation) continue;
         if (event.type === 'session.inbox.cancelled'
@@ -126,12 +135,15 @@ export async function registerAutomaticRouter(ctx, bridge, options = {}) {
           currentModel: session.model, catalog, nonce, preference });
         // Conservative byte budget leaves room inside PCC's context window.
         if (byteLength(JSON.stringify(body)) > 24_000) throw new Error('The PCC routing input exceeds the safe context budget.');
-        const route = parseRoutingResponse(await bridge.complete(body), catalog, nonce);
+        if (reservations.get(event.sessionID) !== reservation) throw new Error('The chat was deleted during routing.');
+        const identity = { host: 'opencode', sessionID: event.sessionID, messageID: event.messageID };
+        const route = parseRoutingResponse(await bridge.complete(body, identity), catalog, nonce);
         const currentCatalog = await catalogFor(session, inputs, textBudget);
         const offered = currentCatalog.some((m) => m.providerID === route.model.providerID && m.id === route.model.id
           && m.routes.some((v) => variantRef(v.variant) === variantRef(route.model.variant)));
         if (!offered) throw new Error('The selected model is no longer connected, allowed, or available.');
         const latest = await ctx.session.get({ sessionID: event.sessionID });
+        if (reservations.get(event.sessionID) !== reservation) throw new Error('The chat was deleted during routing.');
         if (isBusy(latest)) throw new Error('The chat became busy before the routing decision could be applied.');
         await ctx.session.switchModel({ sessionID: event.sessionID, model: route.model });
         const applied = await ctx.session.get({ sessionID: event.sessionID });
@@ -143,6 +155,7 @@ export async function registerAutomaticRouter(ctx, bridge, options = {}) {
         Object.assign(reservation, { stage: 'ready', model: route.model,
           title: text.replace(/\s+/g, ' ').slice(0, 80) });
       } catch (error) {
+        if (reservations.get(event.sessionID) !== reservation) throw error;
         reservations.delete(event.sessionID);
         const text = `PCC routing failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
         await ctx.session.synthetic({ sessionID: event.sessionID, text,

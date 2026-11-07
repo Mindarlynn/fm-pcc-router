@@ -10,7 +10,7 @@ const read = (path) => readFile(resolve(root, path), 'utf8');
 test('package identity, MIT license, and plugin compatibility', async () => {
   const pkg = JSON.parse(await read('package.json'));
   assert.equal(pkg.name, 'fm-pcc-router');
-  assert.equal(pkg.version, '0.4.0');
+  assert.equal(pkg.version, '0.5.0');
   assert.equal(pkg.private, true);
   assert.equal(pkg.license, 'MIT');
   assert.match(await read('LICENSE'), /^MIT License$/m);

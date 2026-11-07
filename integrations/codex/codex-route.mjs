@@ -197,7 +197,10 @@ export async function chooseCodexRoute(task, { getModels = getCodexCatalog, brid
     if (!catalog.length) throw routeError('No Codex model and reasoning effort pairs are available for delegation.');
     const body = createRoutingRequest({ text: task, catalog, nonce });
     if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_TASK_BYTES) throw routeError('Routing request exceeds the 24 KB limit.');
-    const response = await pcc.complete(body);
+    const sessionID = process.env.CODEX_THREAD_ID;
+    const response = sessionID?.trim()
+      ? await pcc.complete(body, { host: 'codex', sessionID })
+      : await pcc.complete(body);
     const parsed = parseRoutingResponse(response, catalog, nonce);
     return { model: parsed.model.id, effort: parsed.model.variant, reason: parsed.reason };
   } finally {

@@ -16,7 +16,7 @@ const bundledSkill = join(integration, skill);
 const files = [
   'LICENSE',
   ...['codex-route.mjs', 'codex-audit.mjs', 'routing.md'].map(file => join(integration, file)),
-  ...['bridge.mjs', 'http.mjs', 'routing.mjs', 'terminal.mjs'].map(file => join('src', file)),
+  ...['bridge.mjs', 'routing.mjs', 'session.mjs', 'terminal.mjs'].map(file => join('src', file)),
   join(bundledSkill, 'SKILL.md'),
   join(bundledSkill, 'LICENSE'),
 ];

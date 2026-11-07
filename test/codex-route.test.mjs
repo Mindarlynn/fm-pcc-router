@@ -66,6 +66,32 @@ test('selected route is validated and returns the model ID plus supported effort
   assert.equal(defaultResult.effort, 'low');
 });
 
+test('the Codex thread ID scopes routing locally and a missing ID leaves routing stateless', async () => {
+  const previous = process.env.CODEX_THREAD_ID;
+  try {
+    for (const sessionID of ['thread-fixture-123', undefined, '']) {
+      if (sessionID === undefined) delete process.env.CODEX_THREAD_ID;
+      else process.env.CODEX_THREAD_ID = sessionID;
+      await chooseCodexRoute('Delegate this task.', {
+        getModels: async () => mapCodexModels([modelData()]),
+        bridge: { complete: async (body, ...identities) => {
+          assert.deepEqual(identities, sessionID ? [{ host: 'codex', sessionID }] : []);
+          if (sessionID) assert(!JSON.stringify(body).includes(sessionID));
+          const { text, context, nonce, catalog } = JSON.parse(body.messages[1].content);
+          assert.equal(text, 'Delegate this task.');
+          assert.equal(context, '');
+          return { model: 'pcc', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+            nonce, route_id: catalog[0].routes[0].route_id, reason: 'Fits the delegated task.',
+          }) } }] };
+        } },
+      });
+    }
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_THREAD_ID;
+    else process.env.CODEX_THREAD_ID = previous;
+  }
+});
+
 test('routing stops before calling PCC when no explicit subagent effort is available', async () => {
   const models = mapCodexModels([{ ...modelData(), supportedReasoningEfforts: [] }]);
   await assert.rejects(chooseCodexRoute('task', {
