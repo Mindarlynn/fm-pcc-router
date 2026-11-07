@@ -1,0 +1,133 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { chooseCodexRoute, getCodexCatalog, mapCodexModels, validateTask } from '../integrations/codex/codex-route.mjs';
+
+const modelData = (id = 'gpt-example') => ({
+  id, displayName: 'Example Codex', contextWindow: 128000,
+  supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }],
+  defaultReasoningEffort: 'low',
+});
+
+test('task input must be nonempty and fit the UTF-8 byte bound', () => {
+  assert.equal(validateTask('do the task'), 'do the task');
+  assert.throws(() => validateTask('  '), /must not be empty/);
+  assert.throws(() => validateTask('あ'.repeat(9000)), /24 KB/);
+});
+
+test('Codex catalog mapping exposes only listed model IDs and supported effort choices', () => {
+  const mapped = mapCodexModels([
+    { ...modelData(), supportedReasoningEfforts: ['low', 'high', 'ultra', 'unknown'] },
+    { ...modelData('hidden'), hidden: true },
+    { ...modelData('no-supported-effort'), supportedReasoningEfforts: ['none'] },
+  ]);
+  assert.equal(mapped.length, 1);
+  assert.deepEqual(mapped[0].variants, [{ id: 'low' }, { id: 'high' }]);
+  assert.equal(mapped[0].limit.context, 128000);
+  assert.equal(mapped[0].capabilities.tools, false);
+  assert.throws(() => mapCodexModels({ data: [] }), /invalid model catalog/);
+  assert.throws(() => mapCodexModels([modelData(), modelData()]), /duplicate model/);
+  assert.throws(() => mapCodexModels([{ ...modelData(), supportedReasoningEfforts: {} }]), /reasoning effort/);
+});
+
+test('selected route is validated and returns the model ID plus supported effort', async () => {
+  const model = mapCodexModels([modelData()])[0];
+  let sent;
+  const result = await chooseCodexRoute('A complex task', {
+    getModels: async () => [model],
+    bridge: { complete: async body => {
+      sent = body;
+      const catalog = JSON.parse(body.messages[1].content).catalog;
+      const route = catalog[0].routes.find(entry => entry.variant === 'high');
+      return { model: 'pcc', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+        nonce: JSON.parse(body.messages[1].content).nonce, route_id: route.route_id, reason: 'Higher reasoning fits this task.',
+      }) } }] };
+    } },
+  });
+  assert.equal(result.model, 'gpt-example');
+  assert.equal(result.effort, 'high');
+  assert.equal(typeof result.reason, 'string');
+  assert.equal(JSON.parse(sent.messages[1].content).catalog[0].providerID, 'codex');
+  await assert.rejects(chooseCodexRoute('task', {
+    getModels: async () => [model], bridge: { complete: async () => ({ model: 'pcc', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ nonce: 'wrong', route_id: 'r1', reason: 'x' }) } }] }) },
+  }), /routing decision/);
+  const defaultResult = await chooseCodexRoute('routine task', {
+    getModels: async () => [model],
+    bridge: { complete: async body => {
+      const payload = JSON.parse(body.messages[1].content);
+      assert.ok(payload.catalog[0].routes.every(route => route.variant));
+      const route = payload.catalog[0].routes.find(entry => entry.variant === 'low');
+      return { model: 'pcc', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+        nonce: payload.nonce, route_id: route.route_id, reason: 'Use the model default effort.',
+      }) } }] };
+    } },
+  });
+  assert.equal(defaultResult.effort, 'low');
+});
+
+test('routing stops before calling PCC when no explicit subagent effort is available', async () => {
+  const models = mapCodexModels([{ ...modelData(), supportedReasoningEfforts: [] }]);
+  await assert.rejects(chooseCodexRoute('task', {
+    getModels: async () => models,
+    bridge: { complete: async () => assert.fail('PCC must not be called without a usable pair') },
+  }), /No Codex model and reasoning effort pairs/);
+});
+
+function fakeCodexChild(pages) {
+  const child = new EventEmitter();
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
+  child.killed = false;
+  child.exitCode = null;
+  child.kill = signal => {
+    child.killed = true;
+    child.exitCode = signal === 'SIGKILL' ? 137 : 0;
+    queueMicrotask(() => { child.emit('close', child.exitCode, signal); child.stdout.end(); });
+    return true;
+  };
+  let pageIndex = 0;
+  child.stdin.on('data', chunk => {
+    for (const line of chunk.toString().trim().split('\n')) {
+      if (!line) continue;
+      const message = JSON.parse(line);
+      if (!('id' in message)) continue;
+      let result = {};
+      if (message.method === 'model/list') result = pages[pageIndex++];
+      child.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result })}\n`);
+    }
+  });
+  return child;
+}
+
+test('app-server initializes, reads every picker catalog page, and always cleans up child', async () => {
+  let child;
+  let args;
+  const catalog = await getCodexCatalog({
+    executable: '/test/codex', timeoutMs: 1000,
+    spawn: (executable, argv, options) => {
+      args = { executable, argv, options };
+      child = fakeCodexChild([
+        { data: [modelData()], nextCursor: 'next' },
+        { data: [modelData('gpt-second')], nextCursor: null },
+      ]);
+      return child;
+    },
+  });
+  assert.equal(args.executable, '/test/codex');
+  assert.deepEqual(args.argv, ['app-server']);
+  assert.deepEqual(catalog.map(model => model.id), ['gpt-example', 'gpt-second']);
+  assert.equal(child.exitCode, 0);
+  assert.equal(child.killed, true);
+});
+
+test('app-server rejects malformed protocol and stops its child', async () => {
+  let child;
+  await assert.rejects(getCodexCatalog({ executable: 'codex', timeoutMs: 1000, spawn: () => {
+    child = fakeCodexChild([]);
+    child.stdin.removeAllListeners('data');
+    child.stdin.on('data', () => child.stdout.write('not json\n'));
+    return child;
+  } }), /malformed protocol/);
+  assert.equal(child.killed, true);
+});
