@@ -1,16 +1,37 @@
 import { PCCBridge } from '../../src/bridge.mjs';
 import { registerAutomaticRouter } from './automatic.mjs';
 
-export function createProbePlugin(makeBridge = () => new PCCBridge()) {
+async function makeShutdownRpc() {
+  const { Rpc } = await import('@opencode/plugin/rpc');
+  const empty = { type: 'object', additionalProperties: false };
+  return Rpc.define({
+    id: 'fm-pcc-router-desktop',
+    methods: { close: { input: empty, output: empty, errors: {} } },
+    events: {},
+  });
+}
+
+export function createProbePlugin(makeBridge = () => new PCCBridge({ quitOwnedTerminal: true }),
+  defineShutdown = makeShutdownRpc) {
+  const closeBridges = new Set();
   return {
     id: 'foundation-pcc-probe',
     async setup(ctx) {
       if (typeof ctx.command?.transform !== 'function' || typeof ctx.session?.synthetic !== 'function') {
         throw new Error('This test plugin requires the OpenCode 2.2.6 API.');
       }
-      const bridge = makeBridge();
+      let bridge = makeBridge();
       let registration;
+      let shutdownRegistration;
       let stopRouter;
+      let stopping;
+      const closeBridge = () => {
+        if (stopping) return stopping;
+        const previous = bridge;
+        bridge = makeBridge();
+        stopping = previous.dispose().finally(() => { stopping = undefined; });
+        return stopping;
+      };
       try {
         registration = await ctx.command.transform((editor) => editor.add({
           name: 'pcc-test',
@@ -28,18 +49,34 @@ export function createProbePlugin(makeBridge = () => new PCCBridge()) {
           },
         }));
         if (ctx.options?.enabled !== false) {
-          stopRouter = await registerAutomaticRouter(ctx, bridge, ctx.options);
+          stopRouter = await registerAutomaticRouter(ctx, { complete: (body) => bridge.complete(body) }, ctx.options);
+        }
+        if (typeof ctx.rpc?.register === 'function') {
+          shutdownRegistration = await ctx.rpc.register(await defineShutdown(), {
+            async close() {
+              const results = await Promise.allSettled([...closeBridges].map(close => close()));
+              const failures = results.filter(result => result.status === 'rejected');
+              if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'PCC cleanup failed.');
+              return {};
+            },
+          });
+          closeBridges.add(closeBridge);
         }
       } catch (error) {
+        await stopRouter?.();
         await registration?.dispose();
         await bridge.dispose();
         throw error;
       }
       return async () => {
+        closeBridges.delete(closeBridge);
         try {
+          await shutdownRegistration?.dispose();
           await stopRouter?.();
           await registration?.dispose();
-        } finally { await bridge.dispose(); }
+        } finally {
+          await Promise.all([stopping, bridge.dispose()]);
+        }
       };
     },
   };

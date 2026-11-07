@@ -59,6 +59,14 @@ test('Terminal identity parser rejects missing or unsafe window identities', () 
   }
 });
 
+test('only a valid Terminal process identity can authorize app termination', () => {
+  const window = '123\n/dev/ttys000';
+  assert.deepEqual(parseTerminalSession(window + '\n234'), { windowID: 123, tty: '/dev/ttys000', terminalPID: 234 });
+  for (const pid of ['0', '1', '2147483648', 'other']) {
+    assert.equal(parseTerminalSession(window + '\n' + pid).terminalPID, undefined);
+  }
+});
+
 test('bridge starts lazily, uses PCC only, serializes probes, and cleans its private directory', async () => {
   let launches = 0;
   let stops = 0;

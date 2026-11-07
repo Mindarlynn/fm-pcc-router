@@ -15,7 +15,7 @@ The router starts `fm serve` in a hidden Terminal window on the Mac. The bridge 
   <img alt="OpenCode routing across local macOS, Apple PCC, and the selected provider" src="docs/architecture-opencode.png">
 </picture>
 
-OpenCode applies the route to the current session and reuses the server while the plugin is loaded.
+OpenCode applies the route to the current session and reuses the server while the plugin is loaded. Quitting OpenCode Desktop closes the router's server and Terminal window. Terminal itself quits only if the router launched it and no windows remain.
 
 ### Codex
 

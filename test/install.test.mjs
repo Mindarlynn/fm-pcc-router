@@ -60,6 +60,7 @@ test('installs only the runtime into global plugins and safely repeats without c
 
   await rm(f.source, { recursive: true });
   const manifest = JSON.parse(await readFile(path.join(f.installed, 'package.json'), 'utf8'));
+  assert.match(await readFile(path.join(f.installed, manifest.exports['./gui-experimental']), 'utf8'), /onCleanup/);
   const { default: plugin } = await import(pathToFileURL(path.join(f.installed, manifest.exports['.'])).href);
   assert.equal(plugin.id, 'foundation-pcc-probe');
   const uninstalled = run(f.installed, 'uninstall', f.xdg);

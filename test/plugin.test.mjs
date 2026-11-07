@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 import { createProbePlugin } from '../integrations/opencode/plugin.mjs';
 
 function mockContext() {
@@ -80,4 +82,58 @@ test('incompatible clients fail before constructing a bridge', async () => {
   let constructed = false;
   await assert.rejects(createProbePlugin(() => { constructed = true; }).setup({}), /OpenCode/);
   assert.equal(constructed, false);
+});
+
+test('desktop cleanup stops every loaded bridge and the next request uses a fresh bridge', async () => {
+  const bridges = [];
+  const rpc = { id: 'fm-pcc-router-desktop' };
+  const plugin = createProbePlugin(() => {
+    const bridge = { disposed: false, calls: 0,
+      async dispose() { this.disposed = true; },
+      async probe() { assert(!this.disposed); this.calls++; return { model: 'pcc', elapsedMs: 1 }; },
+    };
+    bridges.push(bridge);
+    return bridge;
+  }, async () => rpc);
+  const handlers = [];
+  const registrations = [];
+  const setups = [mockContext(), mockContext()];
+  for (const mock of setups) {
+    mock.context.rpc = { async register(contract, implementation) {
+      assert.equal(contract, rpc);
+      handlers.push(implementation);
+      const registration = { disposed: false, async dispose() { this.disposed = true; } };
+      registrations.push(registration);
+      return registration;
+    } };
+  }
+  const cleanups = await Promise.all(setups.map(mock => plugin.setup(mock.context)));
+  await Promise.all([handlers[0].close(), handlers[1].close()]);
+  assert.deepEqual(bridges.map(bridge => bridge.disposed), [true, true, false, false]);
+  await setups[0].commands[0].execute({ sessionID: 'next-chat' });
+  assert.equal(bridges[2].calls, 1);
+  await Promise.all(cleanups.map(cleanup => cleanup()));
+  assert(bridges.every(bridge => bridge.disposed));
+  assert(registrations.every(registration => registration.disposed));
+});
+
+test('the macOS GUI registers its close RPC on the app cleanup lifecycle', async () => {
+  const source = await readFile(new URL('../integrations/opencode/gui-experimental.cjs', import.meta.url), 'utf8');
+  const module = { exports: undefined };
+  const definitions = { '@opencode/plugin/gui': { Plugin: { define: value => value } },
+    '@opencode/plugin/rpc': { Rpc: { define: value => value } } };
+  runInNewContext(source, { module, require: name => definitions[name] });
+  assert.deepEqual([...module.exports.os], ['macos']);
+  let cleanup;
+  let calls = 0;
+  module.exports.main({
+    onCleanup: fn => { cleanup = fn; },
+    client: { rpc: definition => {
+      assert.equal(definition.id, 'fm-pcc-router-desktop');
+      return { async close() { calls++; } };
+    } },
+  });
+  assert.equal(calls, 0);
+  await cleanup();
+  assert.equal(calls, 1);
 });

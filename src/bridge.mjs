@@ -26,13 +26,14 @@ export function validatePCCReply(response, nonce) {
 export class PCCBridge {
   constructor({ launch = launchTerminalServer, stop = stopTerminalServer,
     request = requestJSON, checkAvailable = () => access('/usr/bin/fm'),
-    tempRoot = '/private/tmp', startupMs = 15_000 } = {}) {
+    tempRoot = '/private/tmp', startupMs = 15_000, quitOwnedTerminal = false } = {}) {
     this.launch = launch;
     this.stopServer = stop;
     this.request = request;
     this.checkAvailable = checkAvailable;
     this.tempRoot = tempRoot;
     this.startupMs = startupMs;
+    this.quitOwnedTerminal = quitOwnedTerminal;
     this.lifetime = new AbortController();
     this.queue = Promise.resolve();
     this.starting = undefined;
@@ -47,7 +48,8 @@ export class PCCBridge {
       await this.checkAvailable();
       const dir = await mkdtemp(join(this.tempRoot, 'oc-pcc-'));
       await chmod(dir, 0o700);
-      const state = { dir, socket: join(dir, 'fm.sock'), label: `OpenCode PCC ${randomUUID()}` };
+      const state = { dir, socket: join(dir, 'fm.sock'), label: `OpenCode PCC ${randomUUID()}`,
+        quitOwnedTerminal: this.quitOwnedTerminal };
       this.state = state;
       await this.launch(state, this.lifetime.signal);
       const deadline = Date.now() + this.startupMs;

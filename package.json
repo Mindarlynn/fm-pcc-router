@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Foundation Models PCC routing for OpenCode and Codex subagents.",
   "exports": {
-    ".": "./integrations/opencode/index.js"
+    ".": "./integrations/opencode/index.js",
+    "./gui-experimental": "./integrations/opencode/gui-experimental.cjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",

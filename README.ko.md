@@ -15,7 +15,7 @@ Apple Foundation Models와 Private Cloud Compute(PCC)를 이용해 OpenCode 요�
   <img alt="로컬 macOS, Apple PCC, 선택된 provider 사이의 OpenCode 라우팅 경로" src="docs/architecture-opencode.png">
 </picture>
 
-OpenCode는 현재 세션에 선택된 모델을 적용하고, 플러그인이 로드된 동안 서버를 재사용합니다.
+OpenCode는 현재 세션에 선택된 모델을 적용하고, 플러그인이 로드된 동안 서버를 재사용합니다. OpenCode 데스크톱 앱을 종료하면 라우터가 띄운 서버와 Terminal 창도 닫힙니다. 라우터가 Terminal을 처음 실행했고 열린 창이 하나도 없을 때만 Terminal 앱도 종료됩니다.
 
 ### Codex
 

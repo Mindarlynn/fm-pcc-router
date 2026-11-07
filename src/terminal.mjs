@@ -8,17 +8,26 @@ const exec = promisify(execFile);
 export const shellQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 
 export function parseTerminalSession(value) {
-  const [id, tty] = value.trim().split(/\r?\n/);
+  const [id, tty, terminalPID] = value.trim().split(/\r?\n/);
   if (!/^\d+$/.test(id) || Number(id) < 1 || !/^\/dev\/tty[\w]+$/.test(tty ?? '')) {
     throw new Error('Could not determine the Terminal session identifier.');
   }
-  return { windowID: Number(id), tty };
+  const session = { windowID: Number(id), tty };
+  if (/^[1-9]\d*$/.test(terminalPID ?? '') && Number(terminalPID) > 1 && Number(terminalPID) <= 0x7fffffff) {
+    session.terminalPID = Number(terminalPID);
+  }
+  return session;
 }
 
-const LAUNCH = `on run argv
+const LAUNCH = `use framework "AppKit"
+use scripting additions
+
+on run argv
     set launchCommand to item 1 of argv
     set windowLabel to item 2 of argv
     set sessionFile to item 3 of argv
+    set ownTerminal to false
+    if item 4 of argv is "yes" then set ownTerminal to not (application "Terminal" is running)
     tell application "Terminal"
         set ownedTab to do script launchCommand
         set custom title of ownedTab to windowLabel
@@ -27,6 +36,14 @@ const LAUNCH = `on run argv
             if tty of selected tab of ownedWindow is ownedTTY then
                 set ownedID to id of ownedWindow
                 set sessionText to (ownedID as text) & linefeed & ownedTTY
+                if ownTerminal then
+                    set runningTerminals to current application's NSRunningApplication's runningApplicationsWithBundleIdentifier:"com.apple.Terminal"
+                    if (runningTerminals's |count|() as integer) is 1 then
+                        set terminalProcess to runningTerminals's firstObject()
+                        set terminalPID to terminalProcess's processIdentifier() as integer
+                        set sessionText to sessionText & linefeed & terminalPID
+                    end if
+                end if
                 set sessionHandle to open for access (POSIX file sessionFile) with write permission
                 try
                     set eof of sessionHandle to 0
@@ -45,10 +62,15 @@ const LAUNCH = `on run argv
 end run
 `;
 
-const CLOSE = `on run argv
+const CLOSE = `use framework "AppKit"
+use scripting additions
+
+on run argv
     set windowLabel to item 1 of argv
     set ownedID to (item 2 of argv) as integer
     set ownedTTY to item 3 of argv
+    set terminalPID to (item 4 of argv) as integer
+    if not (application "Terminal" is running) then return
     tell application "Terminal"
         if not (exists window id ownedID) then return
         set ownedWindow to window id ownedID
@@ -58,7 +80,13 @@ const CLOSE = `on run argv
         if custom title of ownedTab is not windowLabel then error "The PCC managed window title has changed."
         if busy of ownedTab then error "The PCC managed window is busy."
         close ownedWindow
+        if terminalPID is 0 or (count windows) is not 0 then return
     end tell
+    set terminalProcess to current application's NSRunningApplication's runningApplicationWithProcessIdentifier:terminalPID
+    if terminalProcess is missing value then return
+    if (terminalProcess's bundleIdentifier() as text) is "com.apple.Terminal" then
+        terminalProcess's terminate()
+    end if
 end run
 `;
 
@@ -73,7 +101,7 @@ export async function launchTerminalServer(state, signal) {
   await writeFile(appleScript, LAUNCH, { mode: 0o600, flag: 'wx' });
   try {
     const { stdout } = await exec('/usr/bin/osascript', [appleScript,
-      `/bin/zsh -f ${shellQuote(scriptPath)}`, state.label, sessionFile],
+      `/bin/zsh -f ${shellQuote(scriptPath)}`, state.label, sessionFile, state.quitOwnedTerminal ? 'yes' : 'no'],
     { signal, timeout: 30_000, maxBuffer: 16_384 });
     Object.assign(state, parseTerminalSession(stdout));
   } catch (cause) {
@@ -123,6 +151,7 @@ export async function stopTerminalServer(state) {
   }
   if (!state.windowID || !state.tty) return;
   await writeFile(closeScript, CLOSE, { mode: 0o600 });
-  await exec('/usr/bin/osascript', [closeScript, state.label, String(state.windowID), state.tty],
+  await exec('/usr/bin/osascript', [closeScript, state.label, String(state.windowID), state.tty,
+    String(state.quitOwnedTerminal ? state.terminalPID ?? 0 : 0)],
     { timeout: 5000, maxBuffer: 8192 });
 }
