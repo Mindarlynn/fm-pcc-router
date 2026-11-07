@@ -4,9 +4,8 @@
 
 ### Installation and removal
 
-- Use `npx skills add mindarlynn/fm-pcc-router` to add the shared skill. Use the skill to install or remove the OpenCode integration, the Codex integration, or both.
-- Install the Codex integration as a skill with user hooks. Preserve existing user hooks and remove only the router's entries during uninstall.
-- Use `npx skills remove fm-pcc-router` to remove the shared skill after uninstalling the integrations.
+- Clone the repository and run `node install.mjs` to install OpenCode, Codex, or both. Use the same installer with `--uninstall` to remove them.
+- Install the Codex skill and user hooks together. Preserve existing user hooks and remove only the router's entries during uninstall.
 
 ### Codex routing
 

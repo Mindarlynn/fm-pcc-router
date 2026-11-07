@@ -1,6 +1,6 @@
 import {
   chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
-  realpathSync, renameSync, rmdirSync, rmSync, writeFileSync,
+  readlinkSync, realpathSync, renameSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
@@ -11,12 +11,18 @@ const entry = fileURLToPath(import.meta.url);
 const source = fileURLToPath(new URL('../../', import.meta.url));
 const integration = 'integrations/codex';
 const registration = '.fm-pcc-router-owned.json';
+const skill = 'skills/fm-pcc-router';
+const bundledSkill = join(integration, skill);
 const files = [
   'LICENSE',
   ...['codex-route.mjs', 'codex-audit.mjs', 'routing.md'].map(file => join(integration, file)),
   ...['bridge.mjs', 'http.mjs', 'routing.mjs', 'terminal.mjs'].map(file => join('src', file)),
+  join(bundledSkill, 'SKILL.md'),
+  join(bundledSkill, 'LICENSE'),
 ];
-const expected = [...files, registration, 'uninstall.mjs', 'src', 'integrations', integration].sort();
+const expected = [
+  ...files, registration, 'uninstall.mjs', 'src', 'integrations', integration, dirname(bundledSkill), bundledSkill,
+].sort();
 
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -126,6 +132,29 @@ function updateHooks(record, action) {
   writeHooks(record.hooksPath, before, record.createdHooks && empty ? undefined : config);
 }
 
+function updateRegistration(directory, record, action) {
+  const link = join(dirname(record.hooksPath), skill);
+  const target = join(directory, bundledSkill);
+  const info = lstatSync(link, { throwIfNoEntry: false });
+  const owned = info?.isSymbolicLink() && readlinkSync(link) === target;
+  if (action === 'uninstall') {
+    updateHooks(record, action);
+    if (owned) unlinkSync(link);
+    return;
+  }
+  if (info && !owned) throw new Error(`A Codex skill already exists at '${link}'. Move it before installing FM PCC Router.`);
+  if (!owned) {
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(target, link, 'dir');
+  }
+  try {
+    updateHooks(record, action);
+  } catch (error) {
+    if (!owned) unlinkSync(link);
+    throw error;
+  }
+}
+
 export function manageCodex(action, {
   dataHome = process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'),
   codexHome = process.env.CODEX_HOME || join(homedir(), '.codex'),
@@ -145,7 +174,7 @@ export function manageCodex(action, {
     const present = inspect(directory);
     if (action === 'uninstall') {
       if (!present) return;
-      updateHooks(present, action);
+      updateRegistration(directory, present, action);
       rmSync(directory, { recursive: true });
       console.log('Removed FM PCC Router for Codex.');
       return;
@@ -158,7 +187,7 @@ export function manageCodex(action, {
         || !readFileSync(join(directory, 'uninstall.mjs')).equals(readFileSync(entry))) {
         throw new Error('The existing Codex router differs. Remove it before reinstalling.');
       }
-      updateHooks(present, action);
+      updateRegistration(directory, present, action);
     } else {
       const node = process.execPath;
       const record = { owner: 'fm-pcc-router', hooksPath, node, groups: hooksFor(directory, node),
@@ -172,7 +201,7 @@ export function manageCodex(action, {
         copyFileSync(entry, join(stage, 'uninstall.mjs'));
         writeFileSync(join(stage, registration), JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });
         renameSync(stage, directory);
-        try { updateHooks(record, action); }
+        try { updateRegistration(directory, record, action); }
         catch (error) { rmSync(directory, { recursive: true }); throw error; }
       } finally {
         rmSync(stage, { recursive: true, force: true });

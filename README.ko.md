@@ -29,24 +29,24 @@ Codex 도구는 서브에이전트 라우팅을 요청할 때 서버를 띄우�
 ## 요구사항
 
 - Apple Intelligence와 PCC를 사용할 수 있는 macOS 27 이상
-- Node.js 20 이상 및 릴리스 설치에 필요한 Git
+- Node.js 20 이상 및 Git
 - OpenCode 라우팅에는 OpenCode 2 데스크톱 앱과 연결된 provider
 - Codex에는 모델·추론 강도를 지정해 서브에이전트를 시작할 수 있는 세션이 필요합니다. 라우터는 ChatGPT 데스크톱 앱에 포함된 App Server도 사용할 수 있습니다.
 
 ## 설치
 
 ```sh
-npx skills add mindarlynn/fm-pcc-router
+git clone https://github.com/mindarlynn/fm-pcc-router.git
+cd fm-pcc-router
+node install.mjs
 ```
 
-`fm-pcc-router`에 `https://github.com/mindarlynn/fm-pcc-router.git`과 릴리스 태그 또는 전체 커밋 SHA를 알려주고 설치를 요청합니다. **OpenCode만**, **Codex만**, **둘 다** 중에서 고릅니다. 요청할 때 설치 대상을 함께 지정할 수도 있습니다.
-
-`skills add`는 설치 스킬을 추가합니다. 스킬을 실행하면 선택한 앱의 라우터가 설치됩니다. 로컬 체크아웃이 있다면 `npx skills add /path/to/fm-pcc-router`를 실행하고, 스킬에 해당 체크아웃 경로를 알려줍니다.
+메뉴에서 **OpenCode**, **Codex**, **둘 다** 중에서 고릅니다. 메뉴를 건너뛰려면 `--target opencode`, `--target codex`, `--target both` 중 하나를 지정합니다.
 
 ### 설치 후
 
 - **OpenCode** — 앱을 다시 시작하고 평소 프로젝트에서 채팅합니다. 플러그인이 모델을 선택해 자동으로 적용합니다.
-- **Codex** — 설치기가 Codex 사용자 훅에 FM PCC Router 항목을 추가합니다. **Settings > Hooks**에서 `UserPromptSubmit`을 검토하고 신뢰합니다. 새 채팅에서 Codex에 작업 위임을 요청합니다. Codex가 훅의 지침을 따르면 위임할 작업 설명을 PCC에 보내고, 선택된 모델과 추론 강도로 서브에이전트를 시작합니다. 명시된 설정이 우선합니다.
+- **Codex** — 설치기가 `fm-pcc-router` 스킬과 Codex 사용자 훅을 함께 등록합니다. **Settings > Hooks**에서 `UserPromptSubmit`을 검토하고 신뢰합니다. 새 채팅에서 Codex에 작업 위임을 요청합니다. Codex가 훅의 지침을 따르면 위임할 작업 설명을 PCC에 보내고, 선택된 모델과 추론 강도로 서브에이전트를 시작합니다. 명시된 설정이 우선합니다.
 
 `$fm-pcc-router`로 작업 하나를 직접 라우팅할 수도 있습니다. 선택 사항인 `PostModelRequest` 훅을 신뢰하면 선택 모델과 서브에이전트 요청에서 관측된 모델을 대조합니다.
 
@@ -82,17 +82,11 @@ OpenCode는 라우팅을 위해 현재 요청과 제한된 최근 대화 텍스�
 
 ## 제거
 
-**fm-pcc-router**에 OpenCode, Codex 또는 둘 다 제거해 달라고 요청합니다. 해당 앱을 다시 시작합니다. 설치 스킬도 지우려면 스킬을 추가했던 범위에서 `npx skills remove fm-pcc-router`을 실행합니다.
-
-설치 스킬을 이미 지웠다면 아래 기본 경로에서 제거 명령을 실행할 수 있습니다. `XDG_CONFIG_HOME`이나 `XDG_DATA_HOME`을 설정했다면 해당 경로를 사용합니다.
-
 ```sh
-# OpenCode
-/bin/zsh -f ~/.config/opencode/plugins/fm-pcc-router/integrations/opencode/manage.zsh uninstall
-
-# Codex
-node ~/.local/share/fm-pcc-router/codex/uninstall.mjs
+node install.mjs --uninstall
 ```
+
+클론한 폴더에서 실행하고 제거할 앱을 고릅니다. Codex를 제거하면 설치된 스킬과 훅도 함께 제거됩니다. 해당 앱을 다시 시작합니다.
 
 개발과 테스트는 [기여 안내](.github/CONTRIBUTING.md), 릴리스 내역은 [변경 기록](docs/CHANGELOG.md)을 참고하세요.
 

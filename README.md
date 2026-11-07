@@ -29,24 +29,24 @@ The Codex helper starts the server when the parent requests a subagent route and
 ## Requirements
 
 - macOS 27 or later with Apple Intelligence and PCC available.
-- Node.js 20 or later and Git for installation from a release.
+- Node.js 20 or later and Git.
 - OpenCode 2 desktop app and a connected provider for OpenCode routing.
 - For Codex, a session with native subagents that accept model and reasoning effort overrides. The router can use the App Server bundled with the ChatGPT desktop app.
 
 ## Installation
 
 ```sh
-npx skills add mindarlynn/fm-pcc-router
+git clone https://github.com/mindarlynn/fm-pcc-router.git
+cd fm-pcc-router
+node install.mjs
 ```
 
-Ask `fm-pcc-router` to install from `https://github.com/mindarlynn/fm-pcc-router.git` and give it a release tag or full commit SHA. Choose **OpenCode only**, **Codex only**, or **both** when prompted. You can include your choice in the request.
-
-The `skills add` command installs the setup skill. Running the skill installs the selected integrations. For a local checkout, run `npx skills add /path/to/fm-pcc-router` and give the skill that checkout path.
+Choose **OpenCode**, **Codex**, or **both** when prompted. To skip the prompt, pass `--target opencode`, `--target codex`, or `--target both`.
 
 ### After installation
 
 - **OpenCode** — Restart OpenCode, open your usual project, and chat as usual. The plugin selects a model and applies it automatically.
-- **Codex** — The installer adds FM PCC Router entries to your Codex user hooks. In **Settings > Hooks**, review and trust `UserPromptSubmit`. In a new chat, ask Codex to delegate a task. The hook gives Codex routing instructions. When Codex follows them, it sends the task description to PCC and applies the chosen model and effort when it creates the subagent. Explicit settings take precedence.
+- **Codex** — The installer adds the `fm-pcc-router` skill and registers Codex user hooks. In **Settings > Hooks**, review and trust `UserPromptSubmit`. In a new chat, ask Codex to delegate a task. The hook gives Codex routing instructions. When Codex follows them, it sends the task description to PCC and applies the chosen model and effort when it creates the subagent. Explicit settings take precedence.
 
 You can also use `$fm-pcc-router` to route one task explicitly. Trust the optional `PostModelRequest` hook to compare its selected model with the model observed in the subagent's requests.
 
@@ -82,17 +82,11 @@ For routing, OpenCode sends the current request and limited recent conversation 
 
 ## Removal
 
-Ask **fm-pcc-router** to remove OpenCode, Codex, or both. Restart the affected apps. To remove the setup skill as well, run `npx skills remove fm-pcc-router` in the scope where you added it.
-
-If you already removed the setup skill, the installed commands work with the default paths below. Substitute your configured base directories if you use `XDG_CONFIG_HOME` or `XDG_DATA_HOME`.
-
 ```sh
-# OpenCode
-/bin/zsh -f ~/.config/opencode/plugins/fm-pcc-router/integrations/opencode/manage.zsh uninstall
-
-# Codex
-node ~/.local/share/fm-pcc-router/codex/uninstall.mjs
+node install.mjs --uninstall
 ```
+
+Run this from the checkout and choose the apps to remove. Codex removal also removes the installed skill and hook entries. Restart the affected apps.
 
 For development and testing, see the [contribution guide](.github/CONTRIBUTING.md). See the [changelog](docs/CHANGELOG.md) for release history.
 

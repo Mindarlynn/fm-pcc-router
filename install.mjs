@@ -1,15 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import { lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
+const source = fileURLToPath(new URL('.', import.meta.url));
 const targetOptions = ['opencode', 'codex', 'both'];
-const usage = [
-  'Usage: node install.mjs --source <local-checkout|https-repository> [--ref <tag|commit>] [--target <opencode|codex|both>]',
-  '       node install.mjs --uninstall [--target <opencode|codex|both>]',
-].join('\n');
+const usage = 'Usage: node install.mjs [--uninstall] [--target <opencode|codex|both>]';
 
 async function chooseTarget() {
   if (!process.stdin.isTTY) throw new Error('Specify --target opencode, codex, or both.');
@@ -20,26 +19,6 @@ async function chooseTarget() {
   } finally {
     menu.close();
   }
-}
-
-function git(cwd, args) {
-  const result = spawnSync('git', args, { cwd, stdio: 'inherit', timeout: 120_000 });
-  if (result.error?.code === 'ENOENT') throw new Error('Git is required to install from a release.');
-  if (result.status !== 0) throw new Error(`Could not prepare the selected release (git ${args[0]}).`);
-}
-
-function checkoutRelease(directory, source, ref) {
-  const url = new URL(source);
-  if (url.username || url.password || url.search || url.hash) {
-    throw new Error('Use an HTTPS repository URL without credentials, a query, or a fragment.');
-  }
-  if (!ref) throw new Error('An HTTPS source requires --ref with a release tag or full commit SHA.');
-  const commit = /^[0-9a-f]{40}$/i.test(ref);
-  const gitRef = commit ? ref : 'refs/tags/' + ref;
-  if (!commit) git(directory, ['check-ref-format', gitRef]);
-  git(directory, ['init', '--quiet']);
-  git(directory, ['fetch', '--quiet', '--depth=1', '--no-tags', '--', source, gitRef]);
-  git(directory, ['checkout', '--quiet', '--detach', 'FETCH_HEAD']);
 }
 
 function installedDirectory(target) {
@@ -64,9 +43,9 @@ function installedDirectory(target) {
   return realpathSync(directory);
 }
 
-function runTarget(target, action, source) {
+function runTarget(target, action) {
   const opencode = target === 'opencode';
-  const directory = source ?? installedDirectory(target);
+  const directory = action === 'install' ? source : installedDirectory(target);
   if (!directory) {
     console.log(`FM PCC Router for ${target} is not installed.`);
     return;
@@ -86,10 +65,10 @@ function runTarget(target, action, source) {
   if (result.status !== 0) throw new Error(`The ${target} command failed.`);
 }
 
-function runTargets(target, action, source) {
+function runTargets(target, action) {
   for (const selected of target === 'both' ? ['opencode', 'codex'] : [target]) {
     try {
-      runTarget(selected, action, source);
+      runTarget(selected, action);
     } catch (error) {
       console.error(`FM PCC Router ${action} failed for ${selected}. ${error.message}`);
       process.exitCode = 1;
@@ -99,8 +78,6 @@ function runTargets(target, action, source) {
 
 async function main() {
   const { values } = parseArgs({ options: {
-    source: { type: 'string' },
-    ref: { type: 'string' },
     target: { type: 'string' },
     uninstall: { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
@@ -113,26 +90,7 @@ async function main() {
   if (!targetOptions.includes(target)) {
     throw new Error('Supported targets are opencode, codex, and both.');
   }
-  if (values.uninstall) {
-    if (values.source !== undefined || values.ref !== undefined) {
-      throw new Error('Uninstall uses the installed files. Omit --source and --ref.');
-    }
-    runTargets(target, 'uninstall');
-    return;
-  }
-  if (!values.source) throw new Error(usage);
-  if (values.source.startsWith('https://')) {
-    const directory = mkdtempSync(join(tmpdir(), 'fm-pcc-setup-'));
-    try {
-      checkoutRelease(directory, values.source, values.ref);
-      runTargets(target, 'install', directory);
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  } else {
-    if (values.ref !== undefined) throw new Error('--ref is only supported for HTTPS repositories.');
-    runTargets(target, 'install', resolve(values.source));
-  }
+  runTargets(target, values.uninstall ? 'uninstall' : 'install');
 }
 
 try {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readlink, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -8,11 +8,12 @@ import { fileURLToPath } from 'node:url';
 import { manageCodex } from '../integrations/codex/manage.mjs';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
-const setup = join(project, 'skills/fm-pcc-router/scripts/install.mjs');
+const setup = join(project, 'install.mjs');
+const bundledSkill = 'integrations/codex/skills/fm-pcc-router';
 const unrelatedHook = { hooks: [{ type: 'command', command: 'existing-user-hook' }] };
 
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "fm pcc router's install "));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "fm pcc router's install ")));
   t.after(() => rm(root, { recursive: true, force: true }));
   const dataHome = join(root, 'data');
   const configHome = join(root, 'config');
@@ -20,7 +21,7 @@ async function fixture(t) {
   const hooksPath = join(codexHome, 'hooks.json');
   const installed = join(dataHome, 'fm-pcc-router/codex');
   return {
-    root, installed, hooksPath, configHome, dataHome,
+    root, installed, hooksPath, configHome, dataHome, skill: join(codexHome, 'skills/fm-pcc-router'),
     openCode: join(configHome, 'opencode/plugins/fm-pcc-router'),
     writeHooks: async data => {
       await mkdir(codexHome, { recursive: true });
@@ -36,7 +37,7 @@ async function fixture(t) {
   };
 }
 
-test('Codex installs user hooks alongside existing hooks and runs from the staged files', async t => {
+test('Codex installs its skill and user hooks alongside existing hooks and runs from the staged files', async t => {
   const f = await fixture(t);
   const original = { description: 'User hooks', hooks: { UserPromptSubmit: [unrelatedHook] } };
   await f.writeHooks(original);
@@ -44,6 +45,8 @@ test('Codex installs user hooks alongside existing hooks and runs from the stage
   f.manage('install');
   assert.deepEqual(await readdir(f.dataHome), ['fm-pcc-router']);
   assert.deepEqual((await readdir(f.installed)).sort(), ['.fm-pcc-router-owned.json', 'LICENSE', 'integrations', 'src', 'uninstall.mjs']);
+  assert.equal(await readlink(f.skill), join(f.installed, bundledSkill));
+  assert.equal(await readFile(join(f.skill, 'SKILL.md'), 'utf8'), await readFile(join(project, bundledSkill, 'SKILL.md'), 'utf8'));
   assert.equal(await readFile(join(f.installed, 'LICENSE'), 'utf8'), await readFile(join(project, 'LICENSE'), 'utf8'));
   await assert.rejects(stat(f.configHome), { code: 'ENOENT' });
   const { description, hooks } = await f.hooks();
@@ -72,6 +75,7 @@ test('Codex installs user hooks alongside existing hooks and runs from the stage
   const removed = f.run(join(f.installed, 'uninstall.mjs'));
   assert.equal(removed.status, 0, removed.stderr);
   await assert.rejects(stat(f.installed), { code: 'ENOENT' });
+  await assert.rejects(lstat(f.skill), { code: 'ENOENT' });
   assert.deepEqual(await f.hooks(), original);
 });
 
@@ -91,6 +95,7 @@ test('install refuses invalid or symlinked hook configuration without installing
   assert.throws(() => f.manage('install'), /Invalid Codex hook groups/);
   assert.deepEqual(await f.hooks(), { hooks: { UserPromptSubmit: 'invalid' } });
   await assert.rejects(stat(f.installed), { code: 'ENOENT' });
+  await assert.rejects(lstat(f.skill), { code: 'ENOENT' });
 
   await rm(f.hooksPath);
   const other = join(f.root, 'other-hooks.json');
@@ -112,16 +117,38 @@ test('uninstall refuses an edited owned hook without deleting the runtime', asyn
   await stat(f.installed);
 });
 
-test('the setup skill removes both integrations and its owned hooks and can be rerun', async t => {
+test('install and uninstall preserve an independently managed Codex skill', async t => {
   const f = await fixture(t);
-  const installed = f.run(setup, '--source', project, '--target', 'both');
+  const addUnrelatedSkill = async () => {
+    await mkdir(f.skill, { recursive: true });
+    await writeFile(join(f.skill, 'SKILL.md'), 'Independent skill');
+  };
+  await addUnrelatedSkill();
+  assert.throws(() => f.manage('install'), /A Codex skill already exists/);
+  await assert.rejects(stat(f.installed), { code: 'ENOENT' });
+  await assert.rejects(stat(f.hooksPath), { code: 'ENOENT' });
+  await rm(f.skill, { recursive: true });
+  f.manage('install');
+  await rm(f.skill);
+  await addUnrelatedSkill();
+  f.manage('uninstall');
+  assert.equal(await readFile(join(f.skill, 'SKILL.md'), 'utf8'), 'Independent skill');
+  await assert.rejects(stat(f.installed), { code: 'ENOENT' });
+  await assert.rejects(stat(f.hooksPath), { code: 'ENOENT' });
+});
+
+test('the checkout installer removes both integrations and their owned registrations', async t => {
+  const f = await fixture(t);
+  const installed = f.run(setup, '--target', 'both');
   assert.equal(installed.status, 0, installed.stderr);
   await stat(f.openCode);
   await stat(f.installed);
+  await stat(join(f.skill, 'SKILL.md'));
   const removed = f.run(setup, '--uninstall', '--target', 'both');
   assert.equal(removed.status, 0, removed.stderr);
   for (const path of [f.openCode, f.installed, f.hooksPath]) {
     await assert.rejects(stat(path), { code: 'ENOENT' });
   }
+  await assert.rejects(lstat(f.skill), { code: 'ENOENT' });
   assert.equal(f.run(setup, '--uninstall', '--target', 'both').status, 0);
 });
