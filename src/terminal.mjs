@@ -8,13 +8,15 @@ const exec = promisify(execFile);
 export const shellQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 
 export function parseTerminalSession(value) {
-  const [id, tty, terminalPID] = value.trim().split(/\r?\n/);
+  const [id, tty, terminalPID, desktopPID] = value.trim().split(/\r?\n/);
   if (!/^\d+$/.test(id) || Number(id) < 1 || !/^\/dev\/tty[\w]+$/.test(tty ?? '')) {
     throw new Error('Could not determine the Terminal session identifier.');
   }
   const session = { windowID: Number(id), tty };
-  if (/^[1-9]\d*$/.test(terminalPID ?? '') && Number(terminalPID) > 1 && Number(terminalPID) <= 0x7fffffff) {
-    session.terminalPID = Number(terminalPID);
+  for (const [key, pid] of Object.entries({ terminalPID, desktopPID })) {
+    if (/^[1-9]\d*$/.test(pid ?? '') && Number(pid) > 1 && Number(pid) <= 0x7fffffff) {
+      session[key] = Number(pid);
+    }
   }
   return session;
 }
@@ -22,12 +24,22 @@ export function parseTerminalSession(value) {
 const LAUNCH = `use framework "AppKit"
 use scripting additions
 
+on appPID(bundleID)
+    set runningApps to current application's NSRunningApplication's runningApplicationsWithBundleIdentifier:bundleID
+    if (runningApps's |count|() as integer) is not 1 then return 0
+    return runningApps's firstObject()'s processIdentifier() as integer
+end appPID
+
 on run argv
     set launchCommand to item 1 of argv
     set windowLabel to item 2 of argv
     set sessionFile to item 3 of argv
     set ownTerminal to false
-    if item 4 of argv is "yes" then set ownTerminal to not (application "Terminal" is running)
+    set desktopPID to 0
+    if item 4 of argv is "yes" then
+        set desktopPID to my appPID("ai.opencode.desktop")
+        set ownTerminal to not (application "Terminal" is running)
+    end if
     tell application "Terminal"
         set ownedTab to do script launchCommand
         set custom title of ownedTab to windowLabel
@@ -35,15 +47,9 @@ on run argv
         repeat with ownedWindow in windows
             if tty of selected tab of ownedWindow is ownedTTY then
                 set ownedID to id of ownedWindow
-                set sessionText to (ownedID as text) & linefeed & ownedTTY
-                if ownTerminal then
-                    set runningTerminals to current application's NSRunningApplication's runningApplicationsWithBundleIdentifier:"com.apple.Terminal"
-                    if (runningTerminals's |count|() as integer) is 1 then
-                        set terminalProcess to runningTerminals's firstObject()
-                        set terminalPID to terminalProcess's processIdentifier() as integer
-                        set sessionText to sessionText & linefeed & terminalPID
-                    end if
-                end if
+                set terminalPID to 0
+                if ownTerminal then set terminalPID to my appPID("com.apple.Terminal")
+                set sessionText to (ownedID as text) & linefeed & ownedTTY & linefeed & terminalPID & linefeed & desktopPID
                 set sessionHandle to open for access (POSIX file sessionFile) with write permission
                 try
                     set eof of sessionHandle to 0

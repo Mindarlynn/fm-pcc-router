@@ -26,7 +26,7 @@ export function validatePCCReply(response, nonce) {
 export class PCCBridge {
   constructor({ launch = launchTerminalServer, stop = stopTerminalServer,
     request = requestJSON, checkAvailable = () => access('/usr/bin/fm'),
-    tempRoot = '/private/tmp', startupMs = 15_000, quitOwnedTerminal = false } = {}) {
+    tempRoot = '/private/tmp', startupMs = 15_000, quitOwnedTerminal = false, onDesktopExit } = {}) {
     this.launch = launch;
     this.stopServer = stop;
     this.request = request;
@@ -34,6 +34,7 @@ export class PCCBridge {
     this.tempRoot = tempRoot;
     this.startupMs = startupMs;
     this.quitOwnedTerminal = quitOwnedTerminal;
+    this.onDesktopExit = onDesktopExit;
     this.lifetime = new AbortController();
     this.queue = Promise.resolve();
     this.starting = undefined;
@@ -52,6 +53,17 @@ export class PCCBridge {
         quitOwnedTerminal: this.quitOwnedTerminal };
       this.state = state;
       await this.launch(state, this.lifetime.signal);
+      if (state.desktopPID && this.onDesktopExit) {
+        // The shared OpenCode server can outlive its Desktop client and miss GUI cleanup.
+        this.desktopWatch = setInterval(() => {
+          try { process.kill(state.desktopPID, 0); } catch (error) {
+            if (error.code !== 'ESRCH') return;
+            clearInterval(this.desktopWatch);
+            this.onDesktopExit();
+          }
+        }, 500);
+        this.desktopWatch.unref();
+      }
       const deadline = Date.now() + this.startupMs;
       while (true) {
         this.lifetime.signal.throwIfAborted();
@@ -115,6 +127,7 @@ export class PCCBridge {
   async cleanup() {
     const state = this.state;
     if (!state) return;
+    clearInterval(this.desktopWatch);
     await this.stopServer(state);
     await rm(state.dir, { recursive: true, force: true });
     this.state = undefined;

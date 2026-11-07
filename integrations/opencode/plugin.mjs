@@ -11,7 +11,7 @@ async function makeShutdownRpc() {
   });
 }
 
-export function createProbePlugin(makeBridge = () => new PCCBridge({ quitOwnedTerminal: true }),
+export function createProbePlugin(makeBridge = (onDesktopExit) => new PCCBridge({ quitOwnedTerminal: true, onDesktopExit }),
   defineShutdown = makeShutdownRpc) {
   const closeBridges = new Set();
   return {
@@ -20,7 +20,7 @@ export function createProbePlugin(makeBridge = () => new PCCBridge({ quitOwnedTe
       if (typeof ctx.command?.transform !== 'function' || typeof ctx.session?.synthetic !== 'function') {
         throw new Error('This test plugin requires the OpenCode 2.2.6 API.');
       }
-      let bridge = makeBridge();
+      let bridge;
       let registration;
       let shutdownRegistration;
       let stopRouter;
@@ -28,10 +28,14 @@ export function createProbePlugin(makeBridge = () => new PCCBridge({ quitOwnedTe
       const closeBridge = () => {
         if (stopping) return stopping;
         const previous = bridge;
-        bridge = makeBridge();
+        bridge = makeBridge(onDesktopExit);
         stopping = previous.dispose().finally(() => { stopping = undefined; });
         return stopping;
       };
+      const onDesktopExit = () => {
+        void closeBridge().catch(error => console.error('FM PCC Router desktop cleanup failed:', error));
+      };
+      bridge = makeBridge(onDesktopExit);
       try {
         registration = await ctx.command.transform((editor) => editor.add({
           name: 'pcc-test',

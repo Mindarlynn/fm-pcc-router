@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { access, stat } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { PCCBridge, validatePCCReply } from '../src/bridge.mjs';
@@ -66,6 +68,31 @@ test('only a valid Terminal process identity can authorize app termination', () 
     assert.equal(parseTerminalSession(window + '\n' + pid).terminalPID, undefined);
   }
 });
+
+test('a surviving OpenCode backend cleans its bridge when the recorded desktop process exits',
+  { timeout: 5_000 }, async (t) => {
+    const desktop = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    t.after(() => { desktop.kill(); });
+    await once(desktop, 'spawn');
+    let stopped = 0;
+    let resolveCleanup;
+    const cleanup = new Promise(resolve => { resolveCleanup = resolve; });
+    const bridge = makeBridge({
+      launch: async (state) => { state.desktopPID = desktop.pid; },
+      stop: async () => { stopped++; },
+      request: async () => ({ models: [{ name: 'pcc', available: true }] }),
+      onDesktopExit: () => resolveCleanup(bridge.dispose()),
+    });
+    t.after(() => bridge.dispose());
+    const state = await bridge.ensureStarted();
+    assert.equal(stopped, 0);
+    const exited = once(desktop, 'exit');
+    desktop.kill();
+    await exited;
+    await cleanup;
+    assert.equal(stopped, 1);
+    await assert.rejects(access(state.dir), { code: 'ENOENT' });
+  });
 
 test('bridge starts lazily, uses PCC only, serializes probes, and cleans its private directory', async () => {
   let launches = 0;
