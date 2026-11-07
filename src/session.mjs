@@ -69,6 +69,7 @@ export function transcriptHistory(value) {
 }
 
 export async function withSession(root, identity, task) {
+  if (!isAbsolute(root)) throw new Error('The PCC session directory must be an absolute path.');
   const key = sessionKey(identity);
   await mkdir(root, { recursive: true, mode: 0o700 });
   const info = await lstat(root);

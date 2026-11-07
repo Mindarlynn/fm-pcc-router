@@ -118,6 +118,23 @@ test('stateless calls and probes do not create chat records', async t => {
   assert.throws(() => validatePCCReply({ model: 'system', choices: [] }, 'n1'), /did not complete/);
 });
 
+test('a relative session path fails before making a PCC request', async () => {
+  const bridge = new PCCBridge({ sessionRoot: 'relative-session-path', respond: async () => {
+    assert.fail('The bridge must not send a request for an invalid state path.');
+  } });
+  await assert.rejects(bridge.complete(input('task', 'n1'), chat('a', '1')), /must be an absolute path/);
+});
+
+test('Codex preserves the current routing input when older chat context exceeds the budget', async t => {
+  const { bridge, calls } = await fixture(t);
+  const identity = chat('budget', undefined, 'codex');
+  await bridge.complete(input('p'.repeat(5_900), 'n1'), identity);
+  const current = 'n'.repeat(18_000);
+  await bridge.complete(input(current, 'n2'), identity);
+  assert.equal(calls[1].length, 1);
+  assert.equal(calls[1][0].text, current);
+});
+
 test('dispose aborts the current invocation and keeps queued work from launching', async () => {
   const started = new EventTarget();
   const ready = once(started, 'ready');
