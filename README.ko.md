@@ -46,7 +46,7 @@ node install.mjs
 ### 설치 후
 
 - **OpenCode** — 앱을 다시 시작하고 평소 프로젝트에서 채팅합니다. 플러그인이 모델을 선택해 자동으로 적용합니다.
-- **Codex** — 설치기가 `fm-pcc-router` 스킬과 Codex 사용자 훅을 함께 등록합니다. **Settings > Hooks**에서 `UserPromptSubmit`을 검토하고 신뢰합니다. 새 채팅에서 Codex에 작업 위임을 요청합니다. Codex가 훅의 지침을 따르면 위임할 작업 설명을 PCC에 보내고, 선택된 모델과 추론 강도로 서브에이전트를 시작합니다. 명시된 설정이 우선합니다.
+- **Codex** — 설치기가 `fm-pcc-router` 스킬과 Codex 사용자 훅을 함께 등록합니다. 새 훅을 불러오려면 **Cmd+Q**로 Codex 앱을 완전히 종료한 뒤 다시 엽니다. 그런 다음 **Settings > Hooks**에서 `UserPromptSubmit`을 검토하고 신뢰합니다. 새 채팅에서 Codex에 작업 위임을 요청합니다. Codex가 훅의 지침을 따르면 위임할 작업 설명을 PCC에 보내고, 선택된 모델과 추론 강도로 서브에이전트를 시작합니다. 명시된 설정이 우선합니다.
 
 `$fm-pcc-router`로 작업 하나를 직접 라우팅할 수도 있습니다. 선택 사항인 `PostModelRequest` 훅을 신뢰하면 선택 모델과 서브에이전트 요청에서 관측된 모델을 대조합니다.
 

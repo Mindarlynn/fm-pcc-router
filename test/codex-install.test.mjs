@@ -141,6 +141,7 @@ test('the checkout installer removes both integrations and their owned registrat
   const f = await fixture(t);
   const installed = f.run(setup, '--target', 'both');
   assert.equal(installed.status, 0, installed.stderr);
+  assert.match(installed.stdout, /Quit and reopen the Codex app.*UserPromptSubmit in Settings > Hooks/);
   await stat(f.openCode);
   await stat(f.installed);
   await stat(join(f.skill, 'SKILL.md'));

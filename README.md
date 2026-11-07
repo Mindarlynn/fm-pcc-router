@@ -46,7 +46,7 @@ Choose **OpenCode**, **Codex**, or **both** when prompted. To skip the prompt, p
 ### After installation
 
 - **OpenCode** — Restart OpenCode, open your usual project, and chat as usual. The plugin selects a model and applies it automatically.
-- **Codex** — The installer adds the `fm-pcc-router` skill and registers Codex user hooks. In **Settings > Hooks**, review and trust `UserPromptSubmit`. In a new chat, ask Codex to delegate a task. The hook gives Codex routing instructions. When Codex follows them, it sends the task description to PCC and applies the chosen model and effort when it creates the subagent. Explicit settings take precedence.
+- **Codex** — The installer adds the `fm-pcc-router` skill and registers Codex user hooks. Quit the Codex app with **Cmd+Q** and reopen it to load the new hooks. Then review and trust `UserPromptSubmit` in **Settings > Hooks**. In a new chat, ask Codex to delegate a task. The hook gives Codex routing instructions. When Codex follows them, it sends the task description to PCC and applies the chosen model and effort when it creates the subagent. Explicit settings take precedence.
 
 You can also use `$fm-pcc-router` to route one task explicitly. Trust the optional `PostModelRequest` hook to compare its selected model with the model observed in the subagent's requests.
 

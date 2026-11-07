@@ -207,7 +207,8 @@ export function manageCodex(action, {
         rmSync(stage, { recursive: true, force: true });
       }
     }
-    console.log('Installed FM PCC Router for Codex. Review and trust its hooks in Settings > Hooks.');
+    console.log('Installed FM PCC Router for Codex.');
+    console.log('Quit and reopen the Codex app to load the new hooks. Then review and trust UserPromptSubmit in Settings > Hooks.');
   } finally {
     rmdirSync(lock);
   }
