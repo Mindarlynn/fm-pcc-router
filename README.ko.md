@@ -43,6 +43,8 @@ node install.mjs
 
 메뉴에서 **OpenCode**, **Codex**, **둘 다** 중에서 고릅니다. 메뉴를 건너뛰려면 `--target opencode`, `--target codex`, `--target both` 중 하나를 지정합니다. 기존 설치를 업데이트하려면 먼저 `node install.mjs --uninstall`로 해당 앱의 라우터를 제거한 뒤 설치합니다.
 
+어느 앱을 선택해도 공용 `fm-pcc-router` 명령이 `~/.local/bin` 또는 `$XDG_BIN_HOME`에 설치됩니다. 해당 디렉터리를 `PATH`에 추가하거나 전체 경로로 실행합니다.
+
 ### 설치 후
 
 - **OpenCode** — 앱을 다시 시작하고 평소 프로젝트에서 채팅합니다. 플러그인이 모델을 선택해 자동으로 적용합니다.
@@ -83,20 +85,25 @@ node install.mjs
 }
 ```
 
-| 작업 | OpenCode | Codex |
-| --- | --- | --- |
-| 전략 목록 보기 | `/pcc-strategy list` | `pcc strategy list` |
-| 현재 채팅의 전략 보기 | `/pcc-strategy current` | `pcc strategy current` |
-| `review` 선택 | `/pcc-strategy use review` | `pcc strategy use review` |
-| `default`로 되돌리기 | `/pcc-strategy use default` | `pcc strategy use default` |
+터미널에서 아래 명령을 실행합니다. `<chat-ref>`에는 대상 채팅의 참조를 넣습니다.
 
-Codex에서는 `UserPromptSubmit` 훅을 신뢰한 상태에서 명령을 별도 메시지로 보냅니다. 선택한 전략은 서브에이전트 라우팅에 적용됩니다. 두 앱 모두 채팅별로 전략 선택과 transcript를 보관합니다. 전략 파일을 수정하면 다음 라우팅부터 반영됩니다. 사용 중인 전략을 삭제했다면 다른 전략을 선택하거나 `default`로 되돌립니다.
+```sh
+fm-pcc-router strategy list
+fm-pcc-router strategy current --chat '<chat-ref>'
+fm-pcc-router strategy use review --chat '<chat-ref>'
+fm-pcc-router strategy use default --chat '<chat-ref>'
+```
+
+- **OpenCode** — `opencode:<세션 ID>`를 사용합니다. 채팅이 속한 프로젝트에서 `opencode session list`를 실행하면 ID를 확인할 수 있습니다.
+- **Codex** — 채팅에서 **Cmd+Option+L**로 복사한 `codex://threads/<id>` 링크를 사용합니다. 선택한 전략은 서브에이전트 라우팅에 적용됩니다.
+
+두 앱 모두 채팅별로 전략 선택과 transcript를 보관합니다. 관리 명령은 채팅 밖에서 실행됩니다. 전략 파일을 수정하면 다음 라우팅부터 반영됩니다. 사용 중인 전략을 삭제했다면 다른 전략을 선택하거나 `default`로 되돌립니다.
 
 전략 이름은 소문자로 시작하며 소문자, 숫자, 하이픈을 합쳐 최대 40자입니다. 전략 지침은 항목당 UTF-8 2,000바이트, 파일 전체는 32KB까지 쓸 수 있습니다. PCC는 선택된 전략의 지침을 받아 적격 후보의 우선순위를 정합니다. 연결된 provider 제한, 모델 자격 조건, 사용자가 명시한 선택은 계속 우선합니다.
 
 ## 연결 확인
 
-OpenCode 채팅에서 `/pcc-test`를 입력하면 PCC 연결을 확인할 수 있습니다. 이 진단은 작업을 실행하지 않습니다. 실패하면 Apple Intelligence 사용 가능 여부, PCC 사용 한도, Terminal 제어 권한을 확인합니다.
+터미널에서 `fm-pcc-router test`를 실행하면 고정된 진단 요청으로 PCC 연결을 확인할 수 있습니다. 실패하면 Apple Intelligence 사용 가능 여부, PCC 사용 한도, Terminal 제어 권한을 확인합니다.
 
 ## 데이터 처리
 
@@ -110,7 +117,7 @@ OpenCode는 라우팅을 위해 현재 요청과 제한된 최근 대화 텍스�
 node install.mjs --uninstall
 ```
 
-클론한 폴더에서 실행하고 제거할 앱을 고릅니다. Codex를 제거하면 설치된 스킬과 훅도 함께 제거됩니다. 해당 앱을 다시 시작합니다.
+클론한 폴더에서 실행하고 제거할 앱을 고릅니다. Codex를 제거하면 설치된 스킬과 훅도 함께 제거됩니다. 마지막 앱의 연동을 제거할 때 공용 명령도 삭제됩니다. 해당 앱을 다시 시작합니다.
 
 개발과 테스트는 [기여 안내](.github/CONTRIBUTING.md), 릴리스 내역은 [변경 기록](docs/CHANGELOG.md)을 참고하세요.
 

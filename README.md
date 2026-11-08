@@ -43,6 +43,8 @@ node install.mjs
 
 Choose **OpenCode**, **Codex**, or **both** when prompted. To skip the prompt, pass `--target opencode`, `--target codex`, or `--target both`. To upgrade an existing installation, run `node install.mjs --uninstall` for the affected hosts before installing the new version.
 
+Either target installs the shared `fm-pcc-router` command in `~/.local/bin` (or `$XDG_BIN_HOME`). Add that directory to `PATH` or run the command by its full path.
+
 ### After installation
 
 - **OpenCode** — Restart OpenCode, open your usual project, and chat as usual. The plugin selects a model and applies it automatically.
@@ -83,20 +85,25 @@ New chats use `default`, the built-in routing strategy. To define reusable strat
 }
 ```
 
-| Action | OpenCode | Codex |
-| --- | --- | --- |
-| List strategies | `/pcc-strategy list` | `pcc strategy list` |
-| Check this chat | `/pcc-strategy current` | `pcc strategy current` |
-| Select `review` | `/pcc-strategy use review` | `pcc strategy use review` |
-| Reset to `default` | `/pcc-strategy use default` | `pcc strategy use default` |
+Run these commands in a terminal. Replace `<chat-ref>` with the target chat reference.
 
-In Codex, send the command as a standalone message with the trusted `UserPromptSubmit` hook enabled. The selection applies to subagent routing. In both apps, each chat keeps its own selection and transcript. Editing a strategy takes effect on the next routing request. If you remove an active strategy, select another one or reset the chat to `default`.
+```sh
+fm-pcc-router strategy list
+fm-pcc-router strategy current --chat '<chat-ref>'
+fm-pcc-router strategy use review --chat '<chat-ref>'
+fm-pcc-router strategy use default --chat '<chat-ref>'
+```
+
+- **OpenCode** — Use `opencode:<session-id>`. Run `opencode session list` from the chat's project to find its ID.
+- **Codex** — Use the `codex://threads/<id>` link copied from the chat with **Cmd+Option+L**. The selection applies to subagent routing.
+
+Each chat keeps its own selection and transcript. The management commands run outside the chat. Editing a strategy takes effect on the next routing request. If you remove an active strategy, select another one or reset the chat to `default`.
 
 Strategy names use lowercase letters, digits, and hyphens, start with a letter, and are at most 40 characters. Keep each strategy under 2,000 UTF-8 bytes and the file within 32 KB. PCC receives the selected strategy's instructions to rank eligible routes. Connected-provider restrictions, model eligibility, and explicit user choices still take precedence.
 
 ## Connection check
 
-Run `/pcc-test` in an OpenCode chat to check PCC connectivity. This diagnostic does not start a task. If it fails, check Apple Intelligence availability, PCC usage limits, and Terminal automation permission.
+Run `fm-pcc-router test` in a terminal to check PCC connectivity. The diagnostic uses a fixed probe. If it fails, check Apple Intelligence availability, PCC usage limits, and Terminal automation permission.
 
 ## Privacy
 
@@ -110,7 +117,7 @@ Routing records are stored locally under `$XDG_STATE_HOME/fm-pcc-router/sessions
 node install.mjs --uninstall
 ```
 
-Run this from the checkout and choose the apps to remove. Codex removal also removes the installed skill and hook entries. Restart the affected apps.
+Run this from the checkout and choose the apps to remove. Codex removal also removes the installed skill and hook entries. The shared command is removed with the last integration. Restart the affected apps.
 
 For development and testing, see the [contribution guide](.github/CONTRIBUTING.md). See the [changelog](docs/CHANGELOG.md) for release history.
 

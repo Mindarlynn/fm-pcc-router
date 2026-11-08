@@ -8,11 +8,13 @@
 - Track bounded transcript state by host and chat. Restore OpenCode context from the current chat and keep only delegation descriptions for Codex.
 - Validate the PCC decision before updating local state and reuse validated results for duplicate OpenCode prompt events.
 - Define reusable routing strategies in a shared local config and select one per OpenCode chat or Codex thread. New chats retain the existing default routing policy.
+- Manage strategies and check PCC connectivity through one local `fm-pcc-router` command. Management commands and their results stay outside both chats.
 
 ### Installation and removal
 
 - Clone the repository and run `node install.mjs` to install OpenCode, Codex, or both. Use the same installer with `--uninstall` to remove them.
 - Install the Codex skill and user hooks together. Preserve existing user hooks and remove only the router's entries during uninstall.
+- Install one shared launcher for either host and remove it with the last integration.
 
 ### Codex routing
 
