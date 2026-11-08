@@ -1,19 +1,21 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFile, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const installer = fileURLToPath(new URL('../install.mjs', import.meta.url));
+const installer = fileURLToPath(new URL('../install.sh', import.meta.url));
+const uninstaller = fileURLToPath(new URL('../uninstall.sh', import.meta.url));
 const launcher = fileURLToPath(new URL('../bin/fm-pcc-router', import.meta.url));
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "fm pcc router's setup "));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = join(root, 'source checkout');
-  const command = join(source, 'install.mjs');
+  const command = join(source, 'install.sh');
+  const remove = join(source, 'uninstall.sh');
   const log = join(root, 'installed-targets');
   const bin = join(root, 'bin');
   const shellFile = join(root, '.zshrc');
@@ -21,8 +23,8 @@ async function fixture(t) {
     await mkdir(join(source, directory), { recursive: true });
   }
   await copyFile(installer, command);
-  await copyFile(new URL('../installer-menu.mjs', import.meta.url), join(source, 'installer-menu.mjs'));
-  await copyFile(new URL('../shell-path.mjs', import.meta.url), join(source, 'shell-path.mjs'));
+  await copyFile(uninstaller, remove);
+  await cp(new URL('../installer/', import.meta.url), join(source, 'installer'), { recursive: true });
   await copyFile(launcher, join(source, 'bin/fm-pcc-router'));
   await writeFile(join(source, 'integrations/opencode/manage.zsh'), [
     '#!/bin/zsh -f',
@@ -39,7 +41,7 @@ async function fixture(t) {
     '',
   ].join('\n'));
   return {
-    run: (args, env = {}) => spawnSync(process.execPath, [command, ...args], {
+    run: (args, env = {}) => spawnSync(args[0] === '--uninstall' ? remove : command, args[0] === '--uninstall' ? args.slice(1) : args, {
       cwd: root, encoding: 'utf8', timeout: 10_000,
       env: { ...process.env, HOME: root, ZDOTDIR: root, SHELL: '/bin/zsh', XDG_BIN_HOME: bin,
         XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'), FM_SETUP_TEST_LOG: log, ...env },
@@ -137,7 +139,7 @@ test('setup appends the command directory once and a new zsh finds it', async t 
 
 test('setup leaves shell settings alone when the directory is already on PATH', async t => {
   const f = await fixture(t);
-  const result = f.run(['--target', 'opencode'], { PATH: `/usr/bin:/bin:${f.bin}` });
+  const result = f.run(['--target', 'opencode'], { PATH: `${dirname(process.execPath)}:/usr/bin:/bin:${f.bin}` });
   assert.equal(result.status, 0, result.stderr);
   await assert.rejects(readFile(f.shellFile), { code: 'ENOENT' });
 });
@@ -240,7 +242,7 @@ test('uninstall recovers a PATH record on its own only after all hosts are gone'
 
 test('uninstall recovers an orphaned launcher only with verified ownership', async t => {
   const f = await fixture(t);
-  assert.equal(f.run(['--target', 'codex'], { PATH: `/usr/bin:/bin:${f.bin}` }).status, 0);
+  assert.equal(f.run(['--target', 'codex'], { PATH: `${dirname(process.execPath)}:/usr/bin:/bin:${f.bin}` }).status, 0);
   const command = join(f.bin, 'fm-pcc-router');
   const unowned = join(f.root, 'config/opencode/plugins/fm-pcc-router');
   await mkdir(unowned, { recursive: true });

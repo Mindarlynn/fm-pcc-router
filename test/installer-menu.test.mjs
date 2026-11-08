@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
-import { chooseTargets } from '../installer-menu.mjs';
+import { chooseTargets } from '../installer/menu.mjs';
 
 const rows = [{ id: 'opencode', label: 'OpenCode' }, { id: 'codex', label: 'Codex', status: 'Installed' }];
 

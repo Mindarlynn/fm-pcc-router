@@ -6,10 +6,13 @@ opencode=${XDG_CONFIG_HOME:-"$HOME/.config"}/opencode/plugins/fm-pcc-router
 for marker in "$codex/.fm-pcc-router-owned.json" "$opencode/.fm-pcc-router-owned"; do
   directory=${marker%/*}
   case "$directory" in /*) ;; *) continue ;; esac
-  if [ -f "$marker" ] && [ ! -L "$marker" ] && [ -f "$directory/cli.mjs" ] && [ ! -L "$directory/cli.mjs" ]; then
-    exec node "$directory/cli.mjs" "$@"
-  fi
+  [ -f "$marker" ] && [ ! -L "$marker" ] || continue
+  for entry in "$directory/src/cli.mjs" "$directory/cli.mjs"; do
+    if [ -f "$entry" ] && [ ! -L "$entry" ]; then
+      exec node "$entry" "$@"
+    fi
+  done
 done
 
-printf '%s\n' 'FM PCC Router is not installed. Run node install.mjs from the repository.' >&2
+printf '%s\n' 'FM PCC Router is not installed. Run ./install.sh from the repository.' >&2
 exit 1

@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { runCLI } from '../cli.mjs';
+import { runCLI } from '../src/cli.mjs';
 import { PCCBridge } from '../src/bridge.mjs';
 import { RoutingStrategies } from '../src/strategies.mjs';
 
-const entry = fileURLToPath(new URL('../cli.mjs', import.meta.url));
+const entry = fileURLToPath(new URL('../src/cli.mjs', import.meta.url));
 const threadID = '00000000-0000-7000-8000-000000000001';
 const sessionID = 'ses_abcdef012345AaBb0123456789';
 const codex = `codex://threads/${threadID}`;

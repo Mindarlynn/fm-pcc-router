@@ -10,7 +10,7 @@ const read = (path) => readFile(resolve(root, path), 'utf8');
 test('package identity, MIT license, and plugin compatibility', async () => {
   const pkg = JSON.parse(await read('package.json'));
   assert.equal(pkg.name, 'fm-pcc-router');
-  assert.equal(pkg.version, '0.5.0');
+  assert.equal(pkg.version, '0.5.1');
   assert.equal(pkg.private, true);
   assert.equal(pkg.license, 'MIT');
   assert.match(await read('LICENSE'), /^MIT License$/m);
@@ -47,14 +47,14 @@ test('local workspace and documented JSON examples reference this package direct
 test('public docs and CI files exist; local artifacts are excluded', async () => {
   for (const path of ['README.md', 'README.ko.md', '.gitignore', '.gitattributes', '.github/CONTRIBUTING.md',
     '.github/SECURITY.md', 'docs/CHANGELOG.md', '.github/workflows/test.yml', 'test/fixtures/opencode/opencode.json',
-    'install.mjs', 'integrations/codex/skills/fm-pcc-router/SKILL.md',
+    'install.sh', 'uninstall.sh', 'installer/install.mjs', 'src/cli.mjs', 'integrations/codex/skills/fm-pcc-router/SKILL.md',
     'integrations/opencode/index.js', 'integrations/opencode/plugin.mjs', 'integrations/opencode/manage.zsh',
     'integrations/codex/manage.mjs', 'integrations/codex/routing.md',
     'integrations/codex/codex-route.mjs', 'integrations/codex/codex-audit.mjs']) await read(path);
   const files = await readdir(root);
   assert(!files.includes('VALIDATION.json'));
-  assert(!files.includes('install.sh'));
-  assert(!files.includes('uninstall.sh'));
+  assert(!files.includes('install.mjs'));
+  assert(!files.includes('cli.mjs'));
   assert(!files.includes('skills'));
   assert.match(await read('.gitignore'), /^\.DS_Store$/m);
 });

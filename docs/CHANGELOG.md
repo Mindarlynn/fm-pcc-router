@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1
+
+- Run `./install.sh` to install and `./uninstall.sh` to remove FM PCC Router. Both support `--target`.
+- Move installer implementation into `installer/` and the runtime CLI into `src/`.
+
 ## 0.5.0
 
 ### Routing transport

@@ -1,17 +1,20 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
-  linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync,
+  linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { chooseTargets } from './installer-menu.mjs';
+import { chooseTargets } from './menu.mjs';
 import { hasShellPathRecord, updateShellPath } from './shell-path.mjs';
 
-const source = fileURLToPath(new URL('.', import.meta.url));
+const source = fileURLToPath(new URL('../', import.meta.url));
 const hosts = { opencode: 'OpenCode', codex: 'Codex' };
-const usage = 'Usage: node install.mjs [--uninstall] [--target <opencode|codex|both>]';
+const usage = 'Usage: ./install.sh [--target <opencode|codex|both>]\n       ./uninstall.sh [--target <opencode|codex|both>]';
+// Recognize the exact launcher shipped in v0.5.0 during upgrades and removal.
+const legacyLauncherHash = '06b796f70bd6f5967000b77b8409e653c46905a24a2b1cba1b403d1d783d531e';
 
 function targetDirectory(target) {
   const opencode = target === 'opencode';
@@ -59,27 +62,33 @@ function launcherPath() {
   return join(base, 'fm-pcc-router');
 }
 
-function ownedLauncher(path, template, failOnConflict = true) {
+function launcherState(path, template, failOnConflict = true) {
   const info = lstatSync(path, { throwIfNoEntry: false });
-  if (!info) return false;
-  const owned = info.isFile() && info.uid === process.getuid() && !(info.mode & 0o022) && info.size === template.length
-    && readFileSync(path).equals(template);
-  if (!owned && failOnConflict) {
+  if (!info) return;
+  if (info.isFile() && info.uid === process.getuid() && !(info.mode & 0o022) && info.size <= template.length) {
+    const contents = readFileSync(path);
+    if (contents.equals(template)) return 'current';
+    if (createHash('sha256').update(contents).digest('hex') === legacyLauncherHash) return 'legacy';
+  }
+  if (failOnConflict) {
     throw new Error(`Refusing to change an existing unowned command at '${path}'.`);
   }
-  return owned;
 }
 
 function installLauncher(path, template) {
-  if (ownedLauncher(path, template)) return;
+  if (launcherState(path, template) === 'current') return;
   const directory = dirname(path);
   const stage = mkdtempSync(join(directory, '.fm-pcc-router-'));
   try {
     const temporary = join(stage, 'command');
     writeFileSync(temporary, template, { mode: 0o755 });
-    try { linkSync(temporary, path); }
-    catch (error) {
-      if (error.code !== 'EEXIST' || !ownedLauncher(path, template)) throw error;
+    if (launcherState(path, template) === 'legacy') {
+      renameSync(temporary, path);
+    } else {
+      try { linkSync(temporary, path); }
+      catch (error) {
+        if (error.code !== 'EEXIST' || launcherState(path, template) !== 'current') throw error;
+      }
     }
   } finally {
     rmSync(stage, { recursive: true, force: true });
@@ -120,7 +129,7 @@ function hasInstalledHost() {
 function removeLauncher(path, template) {
   if (hasInstalledHost()) return;
   updateShellPath(dirname(path), true);
-  if (!ownedLauncher(path, template, false)) return;
+  if (!launcherState(path, template, false)) return;
   unlinkSync(path);
   console.log(`Removed the shared command at '${path}'.`);
 }
@@ -198,7 +207,7 @@ async function main() {
   const path = launcherPath();
   const template = readFileSync(join(source, 'bin/fm-pcc-router'));
   if (uninstall && !targets.length
-      && ((!ownedLauncher(path, template, false) && !hasShellPathRecord(dirname(path))) || hasInstalledHost())) {
+      && ((!launcherState(path, template, false) && !hasShellPathRecord(dirname(path))) || hasInstalledHost())) {
     console.log(target && target !== 'both'
       ? `FM PCC Router for ${hosts[target]} is not installed.` : 'FM PCC Router is not installed.');
     return;
@@ -208,7 +217,7 @@ async function main() {
       runTargets(targets, 'uninstall');
       removeLauncher(path, template);
     } else {
-      ownedLauncher(path, template);
+      launcherState(path, template);
       if (runTargets(targets, 'install')) {
         installLauncher(path, template);
         configureShellPath(path);

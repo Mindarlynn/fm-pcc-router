@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { existsSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { PCCBridge } from './src/bridge.mjs';
-import { doctorReport } from './src/doctor.mjs';
-import { RoutingStrategies } from './src/strategies.mjs';
+import { PCCBridge } from './bridge.mjs';
+import { doctorReport } from './doctor.mjs';
+import { RoutingStrategies } from './strategies.mjs';
 
 const usage = `Usage:
   fm-pcc-router strategy list
