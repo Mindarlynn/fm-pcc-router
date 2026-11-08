@@ -8,11 +8,13 @@ Apple Foundation Models와 Private Cloud Compute(PCC)를 이용해 OpenCode 요�
 
 라우터는 모델을 선택할 때만 임시 Terminal 창에서 `fm respond --model pcc`를 한 번 실행합니다. 입력은 비공개 transcript 파일로 전달하고, 호출이 끝나면 창을 닫습니다. 작업의 모델 추론은 선택된 provider가 실행합니다.
 
+두 연동 모두 [로컬 모델 후보 제한](#모델-후보-제한-설정)과 [채팅별 라우팅 전략](#라우팅-전략)을 적용한 뒤 라우팅을 요청합니다. 공용 CLI에서 전략을 바꾸면 설정만 저장되고 채팅에는 메시지가 추가되지 않습니다.
+
 ### OpenCode
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-opencode-dark.png">
-  <img alt="로컬 macOS, Apple PCC, 선택된 provider 사이의 OpenCode 라우팅 경로" src="docs/architecture-opencode.png">
+  <img alt="OpenCode가 로컬 모델 후보 제한과 채팅별 전략을 적용하고 Apple PCC가 선택한 provider와 모델로 전환하는 흐름" src="docs/architecture-opencode.png">
 </picture>
 
 OpenCode는 현재 채팅의 최근 기록을 사용하고, 라우팅 상태를 채팅별로 관리합니다. 검증된 모델은 현재 세션에 적용됩니다. 채팅을 삭제하면 해당 로컬 라우팅 기록도 삭제됩니다.
@@ -21,10 +23,10 @@ OpenCode는 현재 채팅의 최근 기록을 사용하고, 라우팅 상태를 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-codex-dark.png">
-  <img alt="로컬 제출 훅과 라우터, Apple PCC, 선택된 모델 서비스를 연결하는 Codex 위임 경로" src="docs/architecture-codex.png">
+  <img alt="Codex 라우터가 같은 채팅의 PCC 요청을 순서대로 처리하고 병렬 실행 가능한 서브에이전트에 모델과 추론 강도를 전달하는 흐름" src="docs/architecture-codex.png">
 </picture>
 
-Codex 도구는 상위 에이전트가 서브에이전트 라우팅을 요청할 때 실행됩니다. 스레드 ID가 있으면 같은 Codex 채팅의 최근 위임 설명을 재사용합니다.
+Codex 도구는 상위 에이전트가 서브에이전트 라우팅을 요청할 때 실행됩니다. 스레드 ID가 있으면 같은 채팅의 라우팅 호출은 순서대로 처리되고, 다음 호출은 직전에 저장한 위임 기록을 읽습니다. 각 호출에서 모델과 추론 강도가 정해지면 상위 에이전트가 서브에이전트 작업을 병렬로 실행할 수 있습니다.
 
 ## 요구사항
 

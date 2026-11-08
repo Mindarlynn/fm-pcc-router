@@ -8,11 +8,13 @@ Uses Apple Foundation Models and Private Cloud Compute (PCC) to route OpenCode r
 
 The router opens a temporary Terminal window and runs `fm respond --model pcc` once per routing decision. It supplies the routing input in a private transcript file and closes the window after the call. The selected provider runs the task's model inference.
 
+Both integrations apply the [local candidate limits](#optional-model-candidate-limits) and the [strategy selected for the chat](#routing-strategies) before sending a routing request. The shared CLI changes strategy settings outside the conversation.
+
 ### OpenCode
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-opencode-dark.png">
-  <img alt="OpenCode routing across local macOS, Apple PCC, and the selected provider" src="docs/architecture-opencode.png">
+  <img alt="OpenCode applies local candidate limits and a chat strategy, asks Apple PCC for a route, and switches to the selected provider and model" src="docs/architecture-opencode.png">
 </picture>
 
 OpenCode uses the current chat's recent history and keeps routing state keyed to that chat. A validated route is applied to the current session. Deleting a chat clears its local routing state.
@@ -21,10 +23,10 @@ OpenCode uses the current chat's recent history and keeps routing state keyed to
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-codex-dark.png">
-  <img alt="Codex delegation through the local prompt hook and router, Apple PCC, and the selected model service" src="docs/architecture-codex.png">
+  <img alt="The Codex helper serializes PCC routing within a thread and returns model and effort settings for subagents that can run in parallel" src="docs/architecture-codex.png">
 </picture>
 
-The Codex helper runs when the parent requests a subagent route. It reuses recent delegation descriptions from the same Codex thread when a thread ID is available.
+The Codex helper runs when the parent requests a subagent route. When a thread ID is available, routing calls for that thread wait for each other so the next call reads the latest saved delegation history. Once each call returns its model and effort, the parent can run the subagent tasks in parallel.
 
 ## Requirements
 
