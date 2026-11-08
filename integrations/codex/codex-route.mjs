@@ -7,11 +7,13 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRoutingRequest, parseRoutingResponse, buildCatalog } from '../../src/routing.mjs';
 import { PCCBridge } from '../../src/bridge.mjs';
+import { RoutingStrategies } from '../../src/strategies.mjs';
 import { beginCodexAudit } from './codex-audit.mjs';
 
 export const MAX_TASK_BYTES = 24 * 1024;
 const DEFAULT_TIMEOUT_MS = 12_000;
 const MAX_PROTOCOL_BYTES = 512 * 1024;
+const MAX_HOOK_BYTES = 64 * 1024;
 const BUNDLED_CODEX = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex';
 const SUBAGENT_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 
@@ -185,8 +187,16 @@ export async function getCodexCatalog({ executable, spawn = spawnChild, timeoutM
   finally { await app.stop(); }
 }
 
-export async function chooseCodexRoute(task, { getModels = getCodexCatalog, bridge, nonce = randomUUID() } = {}) {
+function codexIdentity(sessionID) {
+  if (typeof sessionID === 'string' && sessionID.trim()) return { host: 'codex', sessionID };
+}
+
+export async function chooseCodexRoute(task, {
+  getModels = getCodexCatalog, bridge, nonce = randomUUID(), strategies = new RoutingStrategies(),
+} = {}) {
   validateTask(task);
+  const identity = codexIdentity(process.env.CODEX_THREAD_ID);
+  const strategy = await strategies.current(identity);
   const pcc = bridge ?? new PCCBridge();
   try {
     const models = await getModels();
@@ -195,12 +205,9 @@ export async function chooseCodexRoute(task, { getModels = getCodexCatalog, brid
       .map(model => ({ ...model, routes: model.routes.filter(route => SUBAGENT_EFFORTS.has(route.variant)) }))
       .filter(model => model.routes.length > 0);
     if (!catalog.length) throw routeError('No Codex model and reasoning effort pairs are available for delegation.');
-    const body = createRoutingRequest({ text: task, catalog, nonce });
+    const body = createRoutingRequest({ text: task, catalog, nonce, strategy });
     if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_TASK_BYTES) throw routeError('Routing request exceeds the 24 KB limit.');
-    const sessionID = process.env.CODEX_THREAD_ID;
-    const response = sessionID?.trim()
-      ? await pcc.complete(body, { host: 'codex', sessionID })
-      : await pcc.complete(body);
+    const response = identity ? await pcc.complete(body, identity) : await pcc.complete(body);
     const parsed = parseRoutingResponse(response, catalog, nonce);
     return { model: parsed.model.id, effort: parsed.model.variant, reason: parsed.reason };
   } finally {
@@ -220,18 +227,57 @@ async function readStdin() {
   return data;
 }
 
+async function readPromptSubmit() {
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunk of process.stdin) {
+    bytes += chunk.length;
+    if (bytes <= MAX_HOOK_BYTES) chunks.push(chunk);
+    else chunks.length = 0;
+  }
+  if (bytes > MAX_HOOK_BYTES) return;
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return undefined; }
+}
+
+async function promptSubmitOutput(event) {
+  if (event?.hook_event_name === 'UserPromptSubmit' && typeof event.prompt === 'string') {
+    const command = /^pcc strategy (list|current|use ([^\s]+))$/.exec(event.prompt);
+    if (command?.[0] === event.prompt) {
+      const strategies = new RoutingStrategies();
+      const identity = codexIdentity(event.session_id);
+      let message;
+      try {
+        if (command[1] === 'list') {
+          message = `Available PCC strategies: ${(await strategies.list()).join(', ')}.`;
+        } else {
+          if (!identity) throw routeError('The Codex hook did not provide a chat ID.');
+          if (command[1] === 'current') {
+            message = `Current PCC strategy: ${(await strategies.current(identity)).id}.`;
+          } else {
+            await strategies.select(identity, command[2]);
+            message = `PCC strategy selected for this chat: ${command[2]}.`;
+          }
+        }
+      } catch (error) {
+        message = error instanceof Error ? error.message : 'PCC strategy command failed.';
+      }
+      return { decision: 'block', reason: 'FM PCC Router handled this strategy command locally.', systemMessage: message };
+    }
+  }
+  const workflow = fileURLToPath(new URL('./routing.md', import.meta.url));
+  const additionalContext = [
+    'Apply FM PCC Router only if you are already going to create a native subagent.',
+    'Respect explicit model or reasoning effort choices, and use your normal delegation rules.',
+    `Before spawning an eligible subagent, read the PCC routing workflow at ${JSON.stringify(workflow)}.`,
+    'Pass only the delegated task description to the router and supply its selected model and reasoning effort explicitly at spawn.',
+  ].join(' ');
+  return { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext } };
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   if (process.argv[2] === '--user-prompt-submit') {
-    // Drain the hook input without parsing or retaining the user's prompt.
-    for await (const _chunk of process.stdin) {}
-    const workflow = fileURLToPath(new URL('./routing.md', import.meta.url));
-    const additionalContext = [
-      'Apply FM PCC Router only if you are already going to create a native subagent.',
-      'Respect explicit model or reasoning effort choices, and use your normal delegation rules.',
-      `Before spawning an eligible subagent, read the PCC routing workflow at ${JSON.stringify(workflow)}.`,
-      'Pass only the delegated task description to the router and supply its selected model and reasoning effort explicitly at spawn.',
-    ].join(' ');
-    process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext } })}\n`);
+    const output = await promptSubmitOutput(await readPromptSubmit());
+    process.stdout.write(`${JSON.stringify(output)}\n`);
   } else {
     try {
       const task = await readStdin();
