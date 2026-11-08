@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFile, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -21,8 +21,7 @@ async function fixture(t) {
     await mkdir(join(source, directory), { recursive: true });
   }
   await copyFile(installer, command);
-  await copyFile(new URL('../installer-menu.mjs', import.meta.url), join(source, 'installer-menu.mjs'));
-  await copyFile(new URL('../shell-path.mjs', import.meta.url), join(source, 'shell-path.mjs'));
+  await cp(new URL('../installer/', import.meta.url), join(source, 'installer'), { recursive: true });
   await copyFile(launcher, join(source, 'bin/fm-pcc-router'));
   await writeFile(join(source, 'integrations/opencode/manage.zsh'), [
     '#!/bin/zsh -f',
