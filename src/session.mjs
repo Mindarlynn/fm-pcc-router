@@ -3,6 +3,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { performance } from 'node:perf_hooks';
+import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 const exec = promisify(execFile);
@@ -68,7 +70,9 @@ export function transcriptHistory(value) {
   return boundedHistory(parsed.history);
 }
 
-export async function withSession(root, identity, task, { maxAgeMs = transcriptMaxAgeMs } = {}) {
+export async function withSession(root, identity, task, {
+  maxAgeMs = transcriptMaxAgeMs, lockWaitMs = 0, signal,
+} = {}) {
   if (!isAbsolute(root)) throw new Error('The PCC session directory must be an absolute path.');
   const key = sessionKey(identity);
   await mkdir(root, { recursive: true, mode: 0o700 });
@@ -78,14 +82,38 @@ export async function withSession(root, identity, task, { maxAgeMs = transcriptM
   }
   const path = join(root, key + '.json');
   const lock = join(root, key + '.lock');
-  try {
-    // shlock atomically acquires a PID lock and recovers locks left by dead owners.
-    await exec('/usr/bin/shlock', ['-p', String(process.pid), '-f', lock], { timeout: 2500 });
-  } catch (error) {
-    throw new Error('Could not lock the PCC chat state. Retry once the other routing request finishes.', { cause: error });
+  const args = [...(lockWaitMs ? ['-d'] : []), '-p', String(process.pid), '-f', lock];
+  const deadline = performance.now() + lockWaitMs;
+  while (true) {
+    signal?.throwIfAborted();
+    try {
+      // Let shlock finish before observing cancellation so an acquired lock is always released.
+      await exec('/usr/bin/shlock', args, { timeout: 2500 });
+      break;
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (!lockWaitMs) {
+        throw new Error('Could not lock the PCC chat state. Retry once the other routing request finishes.', { cause: error });
+      }
+      // shlock also exits with status 1 for filesystem errors.
+      if (error.code !== 1 || error.stderr || !error.stdout?.endsWith('shlock: extant lock is valid\n')) {
+        throw new Error('Could not lock the PCC chat state.', { cause: error });
+      }
+      const remaining = deadline - performance.now();
+      if (remaining > 0) {
+        await delay(Math.min(100, remaining), undefined, { signal }).catch(error => {
+          signal?.throwIfAborted();
+          throw error;
+        });
+      }
+      if (performance.now() >= deadline) {
+        throw new Error('Timed out waiting for the PCC chat state. Retry once the other routing request finishes.', { cause: error });
+      }
+    }
   }
 
   try {
+    signal?.throwIfAborted();
     let previous;
     const existing = await lstat(path).catch(error => {
       if (error.code !== 'ENOENT') throw error;
@@ -98,7 +126,9 @@ export async function withSession(root, identity, task, { maxAgeMs = transcriptM
         if (previous?.version !== version) throw new Error('Unsupported PCC chat state version.');
       }
     }
+    signal?.throwIfAborted();
     return await task(previous, async (record) => {
+      signal?.throwIfAborted();
       if (record === undefined) {
         await rm(path, { force: true });
         return;
@@ -108,6 +138,7 @@ export async function withSession(root, identity, task, { maxAgeMs = transcriptM
       const staged = join(root, key + '.' + randomUUID() + '.tmp');
       try {
         await writeFile(staged, content, { mode: 0o600, flag: 'wx' });
+        signal?.throwIfAborted();
         await rename(staged, path);
       } finally {
         await rm(staged, { force: true });

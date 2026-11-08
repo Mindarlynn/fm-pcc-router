@@ -5,6 +5,9 @@ import {
   boundedHistory, defaultSessionRoot, makeTranscript, routingFingerprint, transcriptHistory, withSession,
 } from './session.mjs';
 
+// Allow an earlier Terminal request to finish setup, response, and cleanup.
+const routingLockWaitMs = 65_000;
+
 const response = decision => ({ model: 'pcc', choices: [{ finish_reason: 'stop',
   message: { content: JSON.stringify(decision) } }] });
 
@@ -81,7 +84,7 @@ export class PCCBridge {
         }
         return reply;
       };
-      return identity ? withSession(this.sessionRoot, identity, route) : route();
+      return identity ? withSession(this.sessionRoot, identity, route, { lockWaitMs: routingLockWaitMs, signal }) : route();
     });
   }
 

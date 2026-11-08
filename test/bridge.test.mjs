@@ -1,11 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { PCCBridge, validatePCCReply } from '../src/bridge.mjs';
 import { createRoutingRequest } from '../src/routing.mjs';
+import { withSession } from '../src/session.mjs';
 import { parseTerminalSession, respondArguments, shellQuote } from '../src/terminal.mjs';
 
 const catalog = [{ providerID: 'provider', id: 'model', routes: [{ route_id: 'route-1' }] }];
@@ -35,6 +38,12 @@ async function fixture(t) {
   const calls = [];
   const bridge = new PCCBridge({ sessionRoot: root, respond: mockRespond(calls) });
   return { root, calls, bridge };
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return { promise, resolve };
 }
 
 test('Terminal ownership parsing and command arguments only use identifiers, paths, and a fixed instruction', () => {
@@ -76,6 +85,69 @@ test('Codex resumes only prior delegation tasks across bridge instances, with ho
   assert.deepEqual(calls[2][0].history, [{ role: 'user', text: 'delegation A' }]);
   assert.equal(calls[3].length, 1);
   assert.doesNotMatch(JSON.stringify(calls[2]), /OpenCode only/);
+});
+
+test('concurrent Codex bridges serialize one chat and resume its latest committed transcript', async t => {
+  const { root, calls } = await fixture(t);
+  const identity = chat('concurrent', undefined, 'codex');
+  const started = deferred();
+  const release = deferred();
+  const holder = new PCCBridge({ sessionRoot: root, respond: async (...args) => {
+    started.resolve();
+    await release.promise;
+    return mockRespond(calls)(...args);
+  } });
+  const waiter = new PCCBridge({ sessionRoot: root, respond: mockRespond(calls) });
+  const first = holder.complete(input('delegation A', 'n1'), identity);
+  await started.promise;
+  const second = waiter.complete(input('delegation B', 'n2'), identity);
+  try {
+    assert.equal(await Promise.race([second, delay(150, 'pending')]), 'pending');
+    assert.deepEqual(calls, []);
+  } finally {
+    release.resolve();
+    await Promise.allSettled([first, second]);
+  }
+  await Promise.all([first, second]);
+  assert.deepEqual(calls[1][0].history, [{ role: 'user', text: 'delegation A' }]);
+  assert.equal((await readdir(root)).length, 1);
+});
+
+test('contention has a deadline and disposing a waiter preserves the owner’s lock', async t => {
+  const { root, calls } = await fixture(t);
+  const identity = chat('contention', undefined, 'codex');
+  const started = deferred();
+  const release = deferred();
+  const holder = withSession(root, identity, () => {
+    started.resolve();
+    return release.promise;
+  });
+  await started.promise;
+  try {
+    const waiter = new PCCBridge({ sessionRoot: root, respond: mockRespond(calls) });
+    const cancelled = assert.rejects(waiter.complete(input('cancelled', 'n1'), identity), /shut down/);
+    await assert.rejects(withSession(root, identity, () => assert.fail('Contended task ran'), {
+      lockWaitMs: 150,
+    }), /Timed out waiting/);
+    await waiter.dispose();
+    await cancelled;
+    assert.deepEqual(calls, []);
+    assert.match((await readdir(root)).join(','), /^[a-f0-9]{64}\.lock$/);
+  } finally {
+    release.resolve();
+    await holder;
+  }
+  assert.deepEqual(await readdir(root), []);
+});
+
+test('a shlock filesystem error is surfaced without treating it as contention', async t => {
+  const { root } = await fixture(t);
+  const identity = chat('blocked', undefined, 'codex');
+  const key = createHash('sha256').update(JSON.stringify([identity.host, identity.sessionID])).digest('hex');
+  await mkdir(join(root, key + '.lock'));
+  await assert.rejects(withSession(root, identity, () => assert.fail('Task ran without the lock'), {
+    lockWaitMs: 150,
+  }), { message: 'Could not lock the PCC chat state.' });
 });
 
 test('only current validated routes advance state and duplicate messages reuse the decision', async t => {
