@@ -4,6 +4,11 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 
 const marker = '# >>> FM PCC Router PATH >>>';
 const quote = text => "'" + text.replaceAll("'", "'\\''") + "'";
+const recordFile = directory => join(directory, '.fm-pcc-router-shell-path');
+
+export function hasShellPathRecord(directory) {
+  return Boolean(lstatSync(recordFile(directory), { throwIfNoEntry: false }));
+}
 
 function startupFile() {
   const shell = basename(process.env.SHELL ?? '');
@@ -46,7 +51,7 @@ function replaceFile(path, contents, mode, before) {
 }
 
 export function updateShellPath(directory, uninstall = false) {
-  const record = join(directory, '.fm-pcc-router-shell-path');
+  const record = recordFile(directory);
   const recordContents = readOwned(record).contents;
   const saved = recordContents.toString();
   if (uninstall && !saved) return;

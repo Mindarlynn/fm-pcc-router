@@ -144,6 +144,7 @@ export async function respondInTerminal(transcript, schema, signal, { timeoutMs 
   let identity;
   let launched = false;
   let completed = false;
+  let failed = false;
 
   try {
     const args = respondArguments(input, schemaFile).map(shellQuote).join(' ');
@@ -180,18 +181,26 @@ export async function respondInTerminal(transcript, schema, signal, { timeoutMs 
     try { return JSON.parse(await readFile(output, 'utf8')); } catch {
       throw new Error('Invalid structured response from PCC.');
     }
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
-    try {
-      if (launched) {
-        if (!completed) await stopRespond(pidFile, input);
+    let cleanupError;
+    if (launched) {
+      if (!completed) {
+        try { await stopRespond(pidFile, input); } catch (error) { cleanupError = error; }
+      }
+      try {
         const recorded = identity ?? await readFile(session, 'utf8').then(value => value.trim() ? parseTerminalSession(value) : undefined);
         if (recorded) {
           await exec('/usr/bin/osascript', [close, label, String(recorded.windowID), recorded.tty,
             String(recorded.terminalPID ?? 0)], { timeout: 5000, maxBuffer: 8192 });
         }
+      } catch (error) {
+        cleanupError ??= error;
       }
-    } finally {
-      await rm(dir, { recursive: true, force: true });
     }
+    try { await rm(dir, { recursive: true, force: true }); } catch (error) { cleanupError ??= error; }
+    if (!failed && cleanupError) throw cleanupError;
   }
 }

@@ -7,7 +7,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { chooseTargets } from './installer-menu.mjs';
-import { updateShellPath } from './shell-path.mjs';
+import { hasShellPathRecord, updateShellPath } from './shell-path.mjs';
 
 const source = fileURLToPath(new URL('.', import.meta.url));
 const hosts = { opencode: 'OpenCode', codex: 'Codex' };
@@ -62,7 +62,7 @@ function launcherPath() {
 function ownedLauncher(path, template, failOnConflict = true) {
   const info = lstatSync(path, { throwIfNoEntry: false });
   if (!info) return false;
-  const owned = info.isFile() && info.uid === process.getuid() && info.size === template.length
+  const owned = info.isFile() && info.uid === process.getuid() && !(info.mode & 0o022) && info.size === template.length
     && readFileSync(path).equals(template);
   if (!owned && failOnConflict) {
     throw new Error(`Refusing to change an existing unowned command at '${path}'.`);
@@ -87,13 +87,12 @@ function installLauncher(path, template) {
   console.log(`Installed the shared command at '${path}'.`);
 }
 
-function configureShellPath(path, uninstall = false) {
+function configureShellPath(path) {
   try {
-    const rc = updateShellPath(dirname(path), uninstall);
+    const rc = updateShellPath(dirname(path));
     if (rc) console.log(`Configured PATH in '${rc}'. Open a new terminal tab to use fm-pcc-router.`);
   } catch (error) {
-    const action = uninstall ? 'Could not clean up the PATH entry' : `Run the command at '${path}'`;
-    console.error(`FM PCC Router: ${error.message} ${action}.`);
+    console.error(`FM PCC Router: ${error.message} Run the command at '${path}'.`);
   }
 }
 
@@ -114,12 +113,13 @@ function withSetupLock(path, uninstall, action) {
   }
 }
 
+function hasInstalledHost() {
+  return Object.keys(hosts).some(target => installedDirectory(target));
+}
+
 function removeLauncher(path, template) {
-  for (const target of ['opencode', 'codex']) {
-    if (lstatSync(join(targetDirectory(target), 'cli.mjs'), { throwIfNoEntry: false })?.isFile()
-        && installedDirectory(target)) return;
-  }
-  configureShellPath(path, true);
+  if (hasInstalledHost()) return;
+  updateShellPath(dirname(path), true);
   if (!ownedLauncher(path, template, false)) return;
   unlinkSync(path);
   console.log(`Removed the shared command at '${path}'.`);
@@ -180,21 +180,29 @@ async function main() {
     const inspected = inspectTargets(targets);
     const blocked = inspected.some(row => row.disabled);
     const rows = uninstall ? inspected.filter(row => row.installed) : inspected;
-    if (rows.every(row => row.disabled)) {
-      if (blocked) process.exitCode = 1;
-      else console.log(target && target !== 'both'
-        ? `FM PCC Router for ${hosts[target]} is not installed.` : 'FM PCC Router is not installed.');
-      return;
-    }
     if (target && blocked) process.exitCode = 1;
-    targets = target ? rows.map(row => row.id) : await chooseTargets(rows, uninstall ? 'Uninstall' : 'Install');
-    if (!targets.length) {
-      console.log('Cancelled.');
-      return;
+    if (rows.every(row => row.disabled)) {
+      if (blocked) {
+        process.exitCode = 1;
+        return;
+      }
+      targets = [];
+    } else {
+      targets = target ? rows.map(row => row.id) : await chooseTargets(rows, uninstall ? 'Uninstall' : 'Install');
+      if (!targets.length) {
+        console.log('Cancelled.');
+        return;
+      }
     }
   }
   const path = launcherPath();
   const template = readFileSync(join(source, 'bin/fm-pcc-router'));
+  if (uninstall && !targets.length
+      && ((!ownedLauncher(path, template, false) && !hasShellPathRecord(dirname(path))) || hasInstalledHost())) {
+    console.log(target && target !== 'both'
+      ? `FM PCC Router for ${hosts[target]} is not installed.` : 'FM PCC Router is not installed.');
+    return;
+  }
   withSetupLock(path, values.uninstall, () => {
     if (values.uninstall) {
       runTargets(targets, 'uninstall');

@@ -49,6 +49,17 @@ async function fixture(t) {
   };
 }
 
+async function seedCodexHost(root) {
+  const installed = join(root, 'data/fm-pcc-router/codex');
+  await mkdir(installed, { recursive: true });
+  await writeFile(join(installed, '.fm-pcc-router-owned.json'), '{"owner":"fm-pcc-router"}');
+  await writeFile(join(installed, 'uninstall.mjs'), [
+    "import { rmSync } from 'node:fs';",
+    "rmSync(new URL('.', import.meta.url), { recursive: true });",
+  ].join('\n'));
+  return installed;
+}
+
 for (const [target, expected] of [
   ['opencode', ['opencode']],
   ['codex', ['codex']],
@@ -179,4 +190,70 @@ test('uninstall reports an unowned installation and preserves its contents', asy
   assert.equal(result.stdout, '');
   assert.equal(await readFile(file, 'utf8'), 'User files.');
   await assert.rejects(readFile(f.bin), { code: 'ENOENT' });
+});
+
+test('uninstall retries shared cleanup after the last host was removed', async t => {
+  const f = await fixture(t);
+  const original = '# Existing shell settings\n';
+  await writeFile(f.shellFile, original);
+  assert.equal(f.run(['--target', 'codex']).status, 0);
+  const host = await seedCodexHost(f.root);
+  const command = join(f.bin, 'fm-pcc-router');
+  const record = join(f.bin, '.fm-pcc-router-shell-path');
+  const configured = await readFile(f.shellFile, 'utf8');
+  await writeFile(f.shellFile, configured.replace('export PATH=', 'export PATH=edited'));
+
+  const first = f.run(['--uninstall', '--target', 'codex']);
+  assert.equal(first.status, 1, first.stderr);
+  assert.match(first.stderr, /PATH block .* was edited/);
+  await assert.rejects(readFile(join(host, 'uninstall.mjs')), { code: 'ENOENT' });
+  await writeFile(f.shellFile, configured);
+
+  const retry = f.run(['--uninstall']);
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.match(retry.stdout, /Removed the shared command/);
+  assert.equal(await readFile(f.shellFile, 'utf8'), original);
+  await assert.rejects(readFile(command), { code: 'ENOENT' });
+  await assert.rejects(readFile(record), { code: 'ENOENT' });
+});
+
+test('uninstall recovers a PATH record on its own only after all hosts are gone', async t => {
+  const f = await fixture(t);
+  assert.equal(f.run(['--target', 'codex']).status, 0);
+  const host = await seedCodexHost(f.root);
+  const command = join(f.bin, 'fm-pcc-router');
+  const record = join(f.bin, '.fm-pcc-router-shell-path');
+  await rm(command);
+  const configured = await readFile(f.shellFile, 'utf8');
+
+  const otherHost = f.run(['--uninstall', '--target', 'opencode']);
+  assert.equal(otherHost.status, 0, otherHost.stderr);
+  assert.equal(await readFile(f.shellFile, 'utf8'), configured);
+  assert.equal(await readFile(record, 'utf8'), f.shellFile);
+  await rm(host, { recursive: true });
+
+  const retry = f.run(['--uninstall', '--target', 'codex']);
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.equal(await readFile(f.shellFile, 'utf8'), '');
+  await assert.rejects(readFile(record), { code: 'ENOENT' });
+});
+
+test('uninstall recovers an orphaned launcher only with verified ownership', async t => {
+  const f = await fixture(t);
+  assert.equal(f.run(['--target', 'codex'], { PATH: `/usr/bin:/bin:${f.bin}` }).status, 0);
+  const command = join(f.bin, 'fm-pcc-router');
+  const unowned = join(f.root, 'config/opencode/plugins/fm-pcc-router');
+  await mkdir(unowned, { recursive: true });
+
+  const uncertain = f.run(['--uninstall', '--target', 'codex']);
+  assert.equal(uncertain.status, 1, uncertain.stderr);
+  assert.match(uncertain.stderr, /ownership could not be verified/);
+  assert.deepEqual(await readFile(command), await readFile(launcher));
+  await rm(unowned, { recursive: true });
+
+  const retry = f.run(['--uninstall', '--target', 'codex']);
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.match(retry.stdout, /Removed the shared command/);
+  await assert.rejects(readFile(command), { code: 'ENOENT' });
+  await assert.rejects(readFile(f.shellFile), { code: 'ENOENT' });
 });
