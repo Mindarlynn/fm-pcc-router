@@ -72,6 +72,28 @@ To limit selection to specific connected providers, add this entry to the `plugi
 
 Only connected providers in this list are eligible. An empty list blocks all selection. Preserve unrelated settings and plugin entries when applying this example.
 
+## Routing strategies
+
+New chats use `default`, the built-in routing strategy. To define reusable strategies for either app, create `~/.config/fm-pcc-router/strategies.json` (under `$XDG_CONFIG_HOME` if set):
+
+```json
+{
+  "fast": "Prefer low latency and low reasoning for routine tasks.",
+  "review": "Favor accuracy and deeper reasoning for security reviews and complex debugging."
+}
+```
+
+| Action | OpenCode | Codex |
+| --- | --- | --- |
+| List strategies | `/pcc-strategy list` | `pcc strategy list` |
+| Check this chat | `/pcc-strategy current` | `pcc strategy current` |
+| Select `review` | `/pcc-strategy use review` | `pcc strategy use review` |
+| Reset to `default` | `/pcc-strategy use default` | `pcc strategy use default` |
+
+In Codex, send the command as a standalone message with the trusted `UserPromptSubmit` hook enabled. The selection applies to subagent routing. In both apps, each chat keeps its own selection and transcript. Editing a strategy takes effect on the next routing request. If you remove an active strategy, select another one or reset the chat to `default`.
+
+Strategy names use lowercase letters, digits, and hyphens, start with a letter, and are at most 40 characters. Keep each strategy under 2,000 UTF-8 bytes and the file within 32 KB. PCC receives the selected strategy's instructions to rank eligible routes. Connected-provider restrictions, model eligibility, and explicit user choices still take precedence.
+
 ## Connection check
 
 Run `/pcc-test` in an OpenCode chat to check PCC connectivity. This diagnostic does not start a task. If it fails, check Apple Intelligence availability, PCC usage limits, and Terminal automation permission.

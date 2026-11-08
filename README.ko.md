@@ -72,6 +72,28 @@ node install.mjs
 
 목록에 있는 provider 중 연결된 provider만 사용합니다. 빈 목록은 모든 모델 선택을 차단합니다. 예시를 적용할 때 다른 설정과 기존 플러그인 항목은 유지합니다.
 
+## 라우팅 전략
+
+새 채팅은 내장 전략인 `default`로 시작합니다. 두 앱에서 재사용할 전략을 추가하려면 `~/.config/fm-pcc-router/strategies.json`을 만듭니다. `$XDG_CONFIG_HOME`을 쓰는 경우에는 그 아래에 `fm-pcc-router/strategies.json`을 둡니다.
+
+```json
+{
+  "fast": "반복 작업에서는 빠른 응답과 낮은 추론 강도를 우선합니다.",
+  "review": "보안 리뷰나 복잡한 디버깅에서는 정확도와 깊은 추론을 우선합니다."
+}
+```
+
+| 작업 | OpenCode | Codex |
+| --- | --- | --- |
+| 전략 목록 보기 | `/pcc-strategy list` | `pcc strategy list` |
+| 현재 채팅의 전략 보기 | `/pcc-strategy current` | `pcc strategy current` |
+| `review` 선택 | `/pcc-strategy use review` | `pcc strategy use review` |
+| `default`로 되돌리기 | `/pcc-strategy use default` | `pcc strategy use default` |
+
+Codex에서는 `UserPromptSubmit` 훅을 신뢰한 상태에서 명령을 별도 메시지로 보냅니다. 선택한 전략은 서브에이전트 라우팅에 적용됩니다. 두 앱 모두 채팅별로 전략 선택과 transcript를 보관합니다. 전략 파일을 수정하면 다음 라우팅부터 반영됩니다. 사용 중인 전략을 삭제했다면 다른 전략을 선택하거나 `default`로 되돌립니다.
+
+전략 이름은 소문자로 시작하며 소문자, 숫자, 하이픈을 합쳐 최대 40자입니다. 전략 지침은 항목당 UTF-8 2,000바이트, 파일 전체는 32KB까지 쓸 수 있습니다. PCC는 선택된 전략의 지침을 받아 적격 후보의 우선순위를 정합니다. 연결된 provider 제한, 모델 자격 조건, 사용자가 명시한 선택은 계속 우선합니다.
+
 ## 연결 확인
 
 OpenCode 채팅에서 `/pcc-test`를 입력하면 PCC 연결을 확인할 수 있습니다. 이 진단은 작업을 실행하지 않습니다. 실패하면 Apple Intelligence 사용 가능 여부, PCC 사용 한도, Terminal 제어 권한을 확인합니다.

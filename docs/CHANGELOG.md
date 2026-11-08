@@ -7,6 +7,7 @@
 - Run one-shot `fm respond` calls in a temporary Terminal window and close the window after each routing decision.
 - Track bounded transcript state by host and chat. Restore OpenCode context from the current chat and keep only delegation descriptions for Codex.
 - Validate the PCC decision before updating local state and reuse validated results for duplicate OpenCode prompt events.
+- Define reusable routing strategies in a shared local config and select one per OpenCode chat or Codex thread. New chats retain the existing default routing policy.
 
 ### Installation and removal
 

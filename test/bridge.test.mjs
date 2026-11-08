@@ -106,6 +106,20 @@ test('changes to the live catalog invalidate a cached decision for the same mess
   assert.equal(calls.length, 2);
 });
 
+test('strategy edits reroute the same message while retaining its chat context', async t => {
+  const { bridge, calls } = await fixture(t);
+  const identity = chat('strategy-cache', '1');
+  const request = (nonce, instructions) => createRoutingRequest({
+    text: 'Follow up', nonce, catalog, context: [{ role: 'user', text: 'Previous task' }],
+    strategy: { id: 'review', instructions },
+  });
+  await bridge.complete(request('n1', 'Prefer depth.'), identity);
+  await bridge.complete(request('n2', 'Prefer depth.'), identity);
+  await bridge.complete(request('n3', 'Prefer speed.'), identity);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1][0].history, [{ role: 'user', text: 'Previous task' }]);
+});
+
 test('stateless calls and probes do not create chat records', async t => {
   const { root } = await fixture(t);
   const bridge = new PCCBridge({ sessionRoot: root, respond: async (transcript) => {
