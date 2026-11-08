@@ -1,8 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { chooseCodexRoute, getCodexCatalog, mapCodexModels, validateTask } from '../integrations/codex/codex-route.mjs';
+
+const defaultStrategies = { current: async () => ({ id: 'default' }) };
 
 const modelData = (id = 'gpt-example') => ({
   id, displayName: 'Example Codex', contextWindow: 128000,
@@ -35,6 +42,7 @@ test('selected route is validated and returns the model ID plus supported effort
   const model = mapCodexModels([modelData()])[0];
   let sent;
   const result = await chooseCodexRoute('A complex task', {
+    strategies: defaultStrategies,
     getModels: async () => [model],
     bridge: { complete: async body => {
       sent = body;
@@ -50,9 +58,11 @@ test('selected route is validated and returns the model ID plus supported effort
   assert.equal(typeof result.reason, 'string');
   assert.equal(JSON.parse(sent.messages[1].content).catalog[0].providerID, 'codex');
   await assert.rejects(chooseCodexRoute('task', {
+    strategies: defaultStrategies,
     getModels: async () => [model], bridge: { complete: async () => ({ model: 'pcc', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ nonce: 'wrong', route_id: 'r1', reason: 'x' }) } }] }) },
   }), /routing decision/);
   const defaultResult = await chooseCodexRoute('routine task', {
+    strategies: defaultStrategies,
     getModels: async () => [model],
     bridge: { complete: async body => {
       const payload = JSON.parse(body.messages[1].content);
@@ -66,10 +76,80 @@ test('selected route is validated and returns the model ID plus supported effort
   assert.equal(defaultResult.effort, 'low');
 });
 
-test('the Codex thread ID scopes routing locally and a missing ID leaves routing stateless', async () => {
-  const previous = process.env.CODEX_THREAD_ID;
+const routeScript = fileURLToPath(new URL('../integrations/codex/codex-route.mjs', import.meta.url));
+
+function strategyFixture(t) {
+  const root = mkdtempSync(join(tmpdir(), 'pcc-codex-strategy-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const config = join(root, 'config');
+  const state = join(root, 'state');
+  const instruction = 'Prefer lower reasoning effort for simple delegation.';
+  mkdirSync(join(config, 'fm-pcc-router'), { recursive: true });
+  writeFileSync(join(config, 'fm-pcc-router', 'strategies.json'), JSON.stringify({ fast: instruction }), { mode: 0o600 });
+  const hook = (event) => {
+    const result = spawnSync(process.execPath, [routeScript, '--user-prompt-submit'], {
+      input: typeof event === 'string' ? event : JSON.stringify(event),
+      encoding: 'utf8', timeout: 5000,
+      env: { ...process.env, XDG_CONFIG_HOME: config, XDG_STATE_HOME: state, CODEX_THREAD_ID: 'ignored-env-id' },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    return JSON.parse(result.stdout);
+  };
+  return { config, state, instruction, hook };
+}
+
+const promptEvent = (prompt, session_id) => ({ hook_event_name: 'UserPromptSubmit', prompt, session_id });
+
+test('Codex hook handles only exact commands in UserPromptSubmit JSON', (t) => {
+  const { hook } = strategyFixture(t);
+  const ordinary = hook(promptEvent('Ordinary private prompt.', 'first'));
+  assert.deepEqual(Object.keys(ordinary), ['hookSpecificOutput']);
+  assert.equal(ordinary.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+  assert.match(ordinary.hookSpecificOutput.additionalContext, /only if you are already going to create a native subagent/);
+  assert.match(ordinary.hookSpecificOutput.additionalContext, /Pass only the delegated task description/);
+  assert.doesNotMatch(JSON.stringify(ordinary), /Ordinary private prompt/);
+  for (const event of [
+    'pcc strategy use fast',
+    { ...promptEvent('pcc strategy use fast', 'first'), hook_event_name: 'Stop' },
+    promptEvent('Please explain pcc strategy use fast', 'first'),
+    promptEvent('`pcc strategy use fast`', 'first'),
+    promptEvent('pcc strategy use fast\n', 'first'),
+    promptEvent('pcc strategy use fast\nDo another task.', 'first'),
+    promptEvent('pcc strategy use fast ' + 'x'.repeat(64 * 1024), 'first'),
+  ]) assert.deepEqual(hook(event), ordinary);
+  assert.match(hook(promptEvent('pcc strategy current', 'first')).systemMessage, /default/);
+});
+
+test('Codex hook reports commands through native output and blocks inference', (t) => {
+  const { hook, instruction } = strategyFixture(t);
+  const command = (prompt, id) => {
+    const result = hook(promptEvent(prompt, id));
+    assert.equal(result.decision, 'block');
+    assert.ok(result.reason);
+    assert.equal(result.hookSpecificOutput, undefined);
+    assert.doesNotMatch(result.systemMessage, new RegExp(instruction));
+    return result.systemMessage;
+  };
+  assert.match(command('pcc strategy list'), /default, fast/);
+  assert.match(command('pcc strategy use fast'), /did not provide a chat ID/);
+  assert.match(command('pcc strategy use fast', 'first'), /selected.*fast/);
+  assert.match(command('pcc strategy current', 'first'), /fast/);
+  assert.match(command('pcc strategy current', 'second'), /default/);
+  assert.match(command('pcc strategy use absent', 'first'), /Unknown routing strategy/);
+  assert.match(command('pcc strategy current', 'first'), /fast/);
+  assert.match(command('pcc strategy use default', 'first'), /selected.*default/);
+  assert.match(command('pcc strategy current', 'first'), /default/);
+});
+
+test('the Codex thread ID scopes routing locally and a missing ID leaves routing stateless', async (t) => {
+  const { config, state, instruction, hook } = strategyFixture(t);
+  assert.match(hook(promptEvent('pcc strategy use fast', 'thread-fixture-123')).systemMessage, /selected.*fast/);
+  const before = Object.fromEntries(['CODEX_THREAD_ID', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME'].map(key => [key, process.env[key]]));
   try {
-    for (const sessionID of ['thread-fixture-123', undefined, '']) {
+    process.env.XDG_CONFIG_HOME = config;
+    process.env.XDG_STATE_HOME = state;
+    for (const sessionID of ['thread-fixture-123', 'another-thread', undefined, '']) {
       if (sessionID === undefined) delete process.env.CODEX_THREAD_ID;
       else process.env.CODEX_THREAD_ID = sessionID;
       await chooseCodexRoute('Delegate this task.', {
@@ -77,6 +157,7 @@ test('the Codex thread ID scopes routing locally and a missing ID leaves routing
         bridge: { complete: async (body, ...identities) => {
           assert.deepEqual(identities, sessionID ? [{ host: 'codex', sessionID }] : []);
           if (sessionID) assert(!JSON.stringify(body).includes(sessionID));
+          assert.equal(body.messages[0].content.includes(instruction), sessionID === 'thread-fixture-123');
           const { text, context, nonce, catalog } = JSON.parse(body.messages[1].content);
           assert.equal(text, 'Delegate this task.');
           assert.equal(context, '');
@@ -87,14 +168,17 @@ test('the Codex thread ID scopes routing locally and a missing ID leaves routing
       });
     }
   } finally {
-    if (previous === undefined) delete process.env.CODEX_THREAD_ID;
-    else process.env.CODEX_THREAD_ID = previous;
+    for (const [key, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });
 
 test('routing stops before calling PCC when no explicit subagent effort is available', async () => {
   const models = mapCodexModels([{ ...modelData(), supportedReasoningEfforts: [] }]);
   await assert.rejects(chooseCodexRoute('task', {
+    strategies: defaultStrategies,
     getModels: async () => models,
     bridge: { complete: async () => assert.fail('PCC must not be called without a usable pair') },
   }), /No Codex model and reasoning effort pairs/);
