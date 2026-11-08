@@ -9,6 +9,7 @@ function mockContext() {
   return { commands, messages, registrations,
     context: {
       options: { enabled: false },
+      event: { async *subscribe() {} },
       command: { transform: async (edit) => {
         edit({ add: (definition) => commands.push(definition) });
         const registration = { disposed: false, async dispose() { this.disposed = true; } };
@@ -20,7 +21,7 @@ function mockContext() {
   };
 }
 
-test('plugin only registers its explicit test command and does not call PCC during setup', async () => {
+test('plugin registers control commands and does not call PCC during setup', async () => {
   const mock = mockContext();
   let calls = 0;
   let disposed = false;
@@ -30,8 +31,7 @@ test('plugin only registers its explicit test command and does not call PCC duri
   }));
   const cleanup = await plugin.setup(mock.context);
   assert.equal(calls, 0);
-  assert.equal(mock.commands.length, 1);
-  assert.equal(mock.commands[0].name, 'pcc-test');
+  assert.deepEqual(mock.commands.map(({ name }) => name), ['pcc-test', 'pcc-strategy']);
   await mock.commands[0].execute({ sessionID: 'same-chat' });
   assert.equal(calls, 1);
   assert.match(mock.messages[0].text, /PCC 연결 성공/);
@@ -67,6 +67,42 @@ test('non-Error probe failures use an English fallback', async () => {
   assert.match(mock.messages[0].text, /Unknown error/);
   assert.match(mock.messages[0].description, /PCC probe failed.*Unknown error/);
   await cleanup();
+});
+
+test('strategy command reads OpenCode prompt text and responds in the invoking chat', async () => {
+  const mock = mockContext();
+  const selections = new Map();
+  const strategies = {
+    list: async () => ['default', 'fast'],
+    current: async ({ host, sessionID }) => ({ id: selections.get(`${host}:${sessionID}`) ?? 'default' }),
+    async select({ host, sessionID }, name) {
+      if (!(await this.list()).includes(name)) throw new Error(`Unknown routing strategy: ${name}.`);
+      selections.set(`${host}:${sessionID}`, name);
+    },
+  };
+  const cleanup = await createProbePlugin(() => ({ dispose: async () => {} }), () => strategies).setup(mock.context);
+  try {
+    const command = mock.commands.find(({ name }) => name === 'pcc-strategy');
+    const execute = (text, sessionID = 'chat-one') => command.execute({ sessionID, prompt: { text } });
+    await execute('list');
+    await execute('current');
+    await execute(' use   fast ');
+    await execute('current');
+    await execute('current', 'chat-two');
+    await execute('use missing');
+    await execute('use default extra');
+    await execute('use default');
+    await execute('current');
+    assert.deepEqual(mock.messages.map(({ text }) => text), [
+      'Available PCC strategies: default, fast', 'Current PCC strategy: default',
+      'Selected PCC strategy: fast', 'Current PCC strategy: fast', 'Current PCC strategy: default',
+      'PCC strategy command failed: Unknown routing strategy: missing.',
+      'Usage: /pcc-strategy list | current | use <name>', 'Selected PCC strategy: default',
+      'Current PCC strategy: default',
+    ]);
+    assert.equal(mock.messages[4].sessionID, 'chat-two');
+    assert(mock.messages.every(({ resume, delivery }) => resume === false && delivery === 'queue'));
+  } finally { await cleanup(); }
 });
 
 test('registration failure releases the bridge', async () => {
