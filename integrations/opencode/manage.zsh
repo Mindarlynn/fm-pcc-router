@@ -10,7 +10,7 @@ readonly source_files=(
   LICENSE package.json
   integrations/opencode/index.js integrations/opencode/manage.zsh
   integrations/opencode/automatic.mjs integrations/opencode/plugin.mjs
-  src/bridge.mjs src/routing.mjs src/session.mjs src/terminal.mjs
+  src/bridge.mjs src/routing.mjs src/session.mjs src/strategies.mjs src/terminal.mjs
 )
 staging_dir=''
 

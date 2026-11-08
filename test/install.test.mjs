@@ -49,7 +49,7 @@ test('installs only the runtime into global plugins and safely repeats without c
   assert.equal(await readFile(path.join(f.installed, 'LICENSE'), 'utf8'), await readFile(path.join(f.source, 'LICENSE'), 'utf8'));
   assert.deepEqual(await readdir(path.join(f.installed, 'integrations')), ['opencode']);
   assert.deepEqual((await readdir(path.join(f.installed, 'src'))).sort(), [
-    'bridge.mjs', 'routing.mjs', 'session.mjs', 'terminal.mjs',
+    'bridge.mjs', 'routing.mjs', 'session.mjs', 'strategies.mjs', 'terminal.mjs',
   ]);
   assert.equal((await stat(path.join(f.installed, 'integrations/opencode/manage.zsh'))).mode & 0o111, 0o111);
 

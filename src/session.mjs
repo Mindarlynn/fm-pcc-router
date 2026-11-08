@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 const exec = promisify(execFile);
 const version = 1;
 const maxStateBytes = 65_536;
-const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
+const transcriptMaxAgeMs = 7 * 24 * 60 * 60 * 1000;
 const digest = value => createHash('sha256').update(value).digest('hex');
 
 export function defaultSessionRoot() {
@@ -68,7 +68,7 @@ export function transcriptHistory(value) {
   return boundedHistory(parsed.history);
 }
 
-export async function withSession(root, identity, task) {
+export async function withSession(root, identity, task, { maxAgeMs = transcriptMaxAgeMs } = {}) {
   if (!isAbsolute(root)) throw new Error('The PCC session directory must be an absolute path.');
   const key = sessionKey(identity);
   await mkdir(root, { recursive: true, mode: 0o700 });

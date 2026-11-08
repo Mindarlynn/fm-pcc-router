@@ -1,3 +1,5 @@
+import { strategyInstructions } from './strategies.mjs';
+
 const validNumber = value => Number.isFinite(value) && value >= 0;
 const validID = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 256;
 const modalities = values => Array.isArray(values) ? values.filter(validID) : [];
@@ -47,7 +49,7 @@ const instructions = [
   'Use only the supplied evidence. Do not solve the task, browse, read files, call tools or delegate.'
 ].join(' ');
 
-export function createRoutingRequest({ text, context = '', currentModel, catalog, nonce, preference = 'balanced' }) {
+export function createRoutingRequest({ text, context = '', currentModel, catalog, nonce, preference = 'balanced', strategy }) {
   if (!validID(nonce) || !validID(preference) || typeof text !== 'string' || !text.trim()) throw new Error('Invalid routing request.');
   if (!catalog?.length) throw new Error('No eligible models are available.');
   if (typeof context !== 'string') {
@@ -65,7 +67,7 @@ export function createRoutingRequest({ text, context = '', currentModel, catalog
   };
   const body = {
     model: 'pcc', stream: false,
-    messages: [{ role: 'system', content: instructions }, { role: 'user', content: JSON.stringify({ text, context, currentModel: model, preference, nonce, catalog }) }],
+    messages: [{ role: 'system', content: instructions + strategyInstructions(strategy) }, { role: 'user', content: JSON.stringify({ text, context, currentModel: model, preference, nonce, catalog }) }],
     response_format: { type: 'json_schema', json_schema: { name: 'ModelRoute', strict: true, schema: {
       type: 'object', additionalProperties: false, required: ['nonce', 'route_id', 'reason'],
       properties: { nonce: { type: 'string' }, route_id: { type: 'string', enum: catalog.flatMap(m => m.routes.map(r => r.route_id)) }, reason: { type: 'string' } }
