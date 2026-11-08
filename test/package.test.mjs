@@ -10,7 +10,7 @@ const read = (path) => readFile(resolve(root, path), 'utf8');
 test('package identity, MIT license, and plugin compatibility', async () => {
   const pkg = JSON.parse(await read('package.json'));
   assert.equal(pkg.name, 'fm-pcc-router');
-  assert.equal(pkg.version, '0.4.0');
+  assert.equal(pkg.version, '0.5.0');
   assert.equal(pkg.private, true);
   assert.equal(pkg.license, 'MIT');
   assert.match(await read('LICENSE'), /^MIT License$/m);
@@ -24,10 +24,10 @@ test('local workspace and documented JSON examples reference this package direct
   const workspace = JSON.parse(await read(fixture + '/opencode.json'));
   assert(workspace.plugins.some((entry) => entry.endsWith('/') && resolve(root, fixture, entry) === root));
   for (const document of ['README.md', 'README.ko.md']) {
-    const examples = [...(await read(document)).matchAll(/```json\s*([\s\S]*?)```/g)];
-    assert(examples.length > 0, `${document} must include a usable configuration example`);
-    for (const match of examples) {
-      const config = JSON.parse(match[1]);
+    const examples = [...(await read(document)).matchAll(/```json\s*([\s\S]*?)```/g)]
+      .map(match => JSON.parse(match[1])).filter(config => config.$schema === 'https://opencode.ai/config.json');
+    assert(examples.length > 0, `${document} must include a usable OpenCode configuration example`);
+    for (const config of examples) {
       assert(Array.isArray(config.plugins));
       const refs = config.plugins.flatMap((entry) => typeof entry === 'string' ? [entry]
         : entry && typeof entry.package === 'string' ? [entry.package] : []);

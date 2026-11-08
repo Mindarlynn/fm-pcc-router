@@ -1,8 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter, on } from 'node:events';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setImmediate as nextTick } from 'node:timers/promises';
 import { connectedScope, registerAutomaticRouter, requiredInputs, routingContext, validateOptions } from '../integrations/opencode/automatic.mjs';
+
+let config;
+const priorConfig = process.env.XDG_CONFIG_HOME;
+test.before(async () => {
+  config = await mkdtemp(join(tmpdir(), 'fm-pcc-opencode-routing-'));
+  process.env.XDG_CONFIG_HOME = config;
+});
+test.after(async () => {
+  if (priorConfig === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = priorConfig;
+  await rm(config, { recursive: true, force: true });
+});
 
 const model = (providerID, id = 'model') => ({ providerID, id, type: 'chat', name: id,
   enabled: true, capabilities: { tools: true, input: ['text', 'image', 'pdf'], output: ['text'] },
@@ -15,7 +30,7 @@ function fixture(options = {}) {
   const models = [model('automatic-free'), model('contract')];
   const providers = [{ id: 'automatic-free', integrationID: 'free-account' }, { id: 'contract', integrationID: 'contract' }];
   const session = { id: 's', location: { directory: '/test' }, time: {}, model: { providerID: 'contract', id: 'model' }, metadata: { existing: true } };
-  const calls = { pcc: [], switches: [], notices: [] };
+  const calls = { pcc: [], identities: [], forgotten: [], strategiesForgotten: [], switches: [], notices: [] };
   const ctx = {
     provider: { list: async () => ({ data: providers }) },
     integration: { connection: { active: async (id) => connections.has(id) ? { type: 'credential', id: 'metadata-only' } : undefined,
@@ -34,27 +49,35 @@ function fixture(options = {}) {
       catch (error) { if (!signal.aborted) throw error; }
     } },
   };
-  const bridge = { complete: async (body) => {
+  const bridge = { forget: async (identity) => { calls.forgotten.push(identity); }, complete: async (body, identity) => {
     calls.pcc.push(body);
+    calls.identities.push(identity);
     const input = JSON.parse(body.messages[1].content);
     const choice = options.defaultRoute ? input.catalog[0].routes[0].route_id : input.catalog.at(-1).routes.at(-1).route_id;
-    options.beforeReply?.();
+    await options.beforeReply?.();
     return { model: 'pcc', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
       nonce: input.nonce, route_id: choice, reason: 'Fits the current task.' }) } }] };
   } };
+  const selections = new Map();
+  const strategies = {
+    current: async ({ sessionID }) => selections.get(sessionID) ?? { id: 'default' },
+    forget: async (identity) => { calls.strategiesForgotten.push(identity); selections.delete(identity.sessionID); },
+  };
   const prompt = (id = 'm1') => ({ sessionID: 's', messageID: id, prompt: { text: 'Explain a simple function.' }, metadata: { untouched: true } });
-  return { ctx, hooks, events, connections, models, providers, session, calls, bridge, prompt };
+  return { ctx, hooks, events, connections, models, providers, session, calls, bridge, strategies, selections, prompt };
 }
 
 test('routes before admission using connected providers and preserves exact variant and user text', async () => {
   const f = fixture();
-  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge);
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
   try {
     const event = f.prompt();
     await f.hooks.get('prompt')(event);
     assert.deepEqual(f.session.model, { providerID: 'contract', id: 'model', variant: 'deep' });
     assert.deepEqual(f.calls.pcc.map((body) => JSON.parse(body.messages[1].content).catalog.map((m) => m.providerID)), [['contract']]);
+    assert.deepEqual(f.calls.identities, [{ host: 'opencode', sessionID: 's', messageID: 'm1' }]);
     assert.equal(event.prompt.text, 'Explain a simple function.');
+    assert.deepEqual(f.calls.notices, []);
     assert(event.metadata.untouched && f.session.metadata.existing);
     assert.equal(event.metadata.foundationRouter.model.variant, 'deep');
     await f.hooks.get('model.request')({ sessionID: 's', kind: 'primary', model: f.session.model });
@@ -65,9 +88,31 @@ test('routes before admission using connected providers and preserves exact vari
   } finally { await cleanup(); }
 });
 
+test('candidate settings narrow connected providers and invalid settings stop before PCC', async t => {
+  const f = fixture();
+  const directory = join(config, 'fm-pcc-router');
+  const file = join(directory, 'routing.json');
+  await mkdir(directory);
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
+  try {
+    await writeFile(file, '{broken');
+    await assert.rejects(f.hooks.get('prompt')(f.prompt()), /invalid JSON/);
+    assert.equal(f.calls.pcc.length, 0);
+    f.models.push(model('contract', 'chosen'));
+    await writeFile(file, JSON.stringify({ hosts: { opencode: { models: [
+      { providerID: 'automatic-free', id: 'model' }, { providerID: 'contract', id: 'chosen' },
+    ] } } }));
+    await f.hooks.get('prompt')(f.prompt());
+    const [{ messages }] = f.calls.pcc;
+    assert.deepEqual(JSON.parse(messages[1].content).catalog.map(({ providerID, id }) => [providerID, id]),
+      [['contract', 'chosen']]);
+  } finally { await cleanup(); }
+});
+
 test('default variant readback is accepted through prompt admission and inference guard', async () => {
   const f = fixture({ readbackDefault: true, defaultRoute: true });
-  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge);
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
   try {
     const event = f.prompt();
     await f.hooks.get('prompt')(event);
@@ -79,7 +124,7 @@ test('default variant readback is accepted through prompt admission and inferenc
 
 test('provider additions are considered on the next idle request without a code change', async () => {
   const f = fixture();
-  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge);
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
   try {
     await f.hooks.get('prompt')(f.prompt());
     f.events.emit('event', { type: 'session.execution.succeeded', data: { sessionID: 's' } });
@@ -89,7 +134,71 @@ test('provider additions are considered on the next idle request without a code 
     f.models.push(model('new-provider', 'new-model'));
     await f.hooks.get('prompt')(f.prompt('m2'));
     assert.equal(f.session.model.providerID, 'new-provider');
-    assert.equal(f.calls.pcc.length, 2);
+    assert.deepEqual(f.calls.identities, [
+      { host: 'opencode', sessionID: 's', messageID: 'm1' },
+      { host: 'opencode', sessionID: 's', messageID: 'm2' },
+    ]);
+  } finally { await cleanup(); }
+});
+
+test('reads the strategy for each admitted prompt and keeps the connected-provider boundary', async () => {
+  const f = fixture();
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
+  try {
+    f.selections.set('other', { id: 'other', instructions: 'Different chat.' });
+    await f.hooks.get('prompt')(f.prompt());
+    assert.doesNotMatch(f.calls.pcc[0].messages[0].content, /User-configured ranking preference/);
+
+    f.events.emit('event', { type: 'session.execution.succeeded', data: { sessionID: 's' } });
+    await nextTick();
+    f.selections.set('s', { id: 'fast', instructions: 'Prefer low latency.' });
+    await f.hooks.get('prompt')(f.prompt('m2'));
+    assert.match(f.calls.pcc[1].messages[0].content, /Prefer low latency/);
+    assert.doesNotMatch(f.calls.pcc[1].messages[0].content, /Different chat/);
+    assert.deepEqual(JSON.parse(f.calls.pcc[1].messages[1].content).catalog.map((m) => m.providerID), ['contract']);
+  } finally { await cleanup(); }
+});
+
+test('deleting an idle session clears strategy selection even when transcript cleanup fails', async (t) => {
+  const f = fixture();
+  const identity = { host: 'opencode', sessionID: 'idle-chat' };
+  f.selections.set('idle-chat', { id: 'fast' });
+  const forget = f.bridge.forget;
+  f.bridge.forget = async (key) => { await forget(key); throw new Error('transcript cleanup failed'); };
+  const log = t.mock.method(console, 'error', () => {});
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
+  try {
+    f.events.emit('event', { type: 'session.deleted', data: { sessionID: 'idle-chat' } });
+    await nextTick();
+    assert.deepEqual(f.calls.strategiesForgotten, [identity]);
+    assert.deepEqual(f.calls.forgotten, [identity]);
+    assert.equal(f.selections.has('idle-chat'), false);
+    assert.match(log.mock.calls[0].arguments[0], /routing state/);
+  } finally { await cleanup(); }
+});
+
+test('deleting a session clears strategy and routing state while automatic routing is disabled', async () => {
+  const f = fixture();
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, { enabled: false }, f.strategies);
+  try {
+    f.events.emit('event', { type: 'session.deleted', data: { sessionID: 'idle-chat' } });
+    await nextTick();
+    assert.deepEqual(f.calls.strategiesForgotten, [{ host: 'opencode', sessionID: 'idle-chat' }]);
+    assert.deepEqual(f.calls.forgotten, [{ host: 'opencode', sessionID: 'idle-chat' }]);
+    assert.equal(f.hooks.size, 0);
+  } finally { await cleanup(); }
+});
+
+test('deleting a session during PCC selection prevents a model switch', async () => {
+  const f = fixture({ beforeReply: async () => {
+    f.events.emit('event', { type: 'session.deleted', data: { sessionID: 's' } });
+    await nextTick();
+  } });
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
+  try {
+    await assert.rejects(f.hooks.get('prompt')(f.prompt()), /deleted during routing/);
+    assert.deepEqual(f.calls.forgotten, [{ host: 'opencode', sessionID: 's' }]);
+    assert.deepEqual(f.calls.switches, []);
   } finally { await cleanup(); }
 });
 
@@ -97,7 +206,7 @@ test('an explicit provider allowlist is a hard boundary and an empty list never 
   const f = fixture();
   f.connections.add('free-account');
   assert.deepEqual(await connectedScope(f.ctx, f.session.location, ['contract']), ['contract']);
-  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, { allowedProviders: [] });
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, { allowedProviders: [] }, f.strategies);
   try {
     await assert.rejects(f.hooks.get('prompt')(f.prompt()), /No eligible/);
     assert.equal(f.calls.pcc.length, 0);
@@ -107,7 +216,7 @@ test('an explicit provider allowlist is a hard boundary and an empty list never 
 
 test('disconnecting during PCC selection rejects the result before switching', async () => {
   const f = fixture({ beforeReply: () => f.connections.delete('contract') });
-  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge);
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
   try {
     await assert.rejects(f.hooks.get('prompt')(f.prompt()), /no longer connected/);
     assert.equal(f.calls.switches.length, 0);
@@ -116,7 +225,7 @@ test('disconnecting during PCC selection rejects the result before switching', a
 
 test('inference guard blocks other providers, executor mismatches and removed connections', async () => {
   const f = fixture();
-  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge);
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
   try {
     await f.hooks.get('prompt')(f.prompt());
     const guard = f.hooks.get('model.request');
@@ -137,7 +246,7 @@ test('inference guard blocks other providers, executor mismatches and removed co
 
 test('cancelling the reserved inbox item permits a new routing decision', async () => {
   const f = fixture();
-  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge);
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
   try {
     await f.hooks.get('prompt')(f.prompt());
     f.events.emit('event', { type: 'session.inbox.cancelled', data: { sessionID: 's', inboxID: 'different' } });
@@ -153,7 +262,7 @@ test('cancelling the reserved inbox item permits a new routing decision', async 
 test('steering an active task does not switch its model or call PCC again', async () => {
   const f = fixture();
   f.session.time.busy = 123;
-  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge);
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
   try {
     await f.hooks.get('prompt')(f.prompt());
     assert.equal(f.calls.pcc.length, 0);
@@ -163,7 +272,7 @@ test('steering an active task does not switch its model or call PCC again', asyn
 test('a historical busy timestamp does not prevent routing after the chat becomes idle', async () => {
   const f = fixture();
   f.session.time = { busy: 123, idle: 456 };
-  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge);
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
   try {
     await f.hooks.get('prompt')(f.prompt());
     assert.equal(f.calls.pcc.length, 1);
@@ -175,13 +284,12 @@ test('PCC failure never starts a model and permits a later retry', async () => {
   const f = fixture();
   let fail = true;
   const complete = f.bridge.complete;
-  f.bridge.complete = async (body) => { if (fail) throw new Error('PCC unavailable'); return complete(body); };
-  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge);
+  f.bridge.complete = async (...args) => { if (fail) throw new Error('PCC unavailable'); return complete(...args); };
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
   try {
     await assert.rejects(f.hooks.get('prompt')(f.prompt()), /PCC unavailable/);
     assert.equal(f.calls.switches.length, 0);
-    assert.match(f.calls.notices[0].description, /PCC routing failed: PCC unavailable/);
-    assert.equal(f.calls.notices[0].resume, false);
+    assert.deepEqual(f.calls.notices, []);
     fail = false;
     await f.hooks.get('prompt')(f.prompt());
     assert.equal(f.calls.switches.length, 1);
@@ -190,7 +298,7 @@ test('PCC failure never starts a model and permits a later retry', async () => {
 
 test('oversized current requests fail without truncation or a PCC call', async () => {
   const f = fixture();
-  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge);
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
   try {
     const event = f.prompt();
     event.prompt.text = 'a'.repeat(30_000);

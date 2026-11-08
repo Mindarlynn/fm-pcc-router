@@ -5,8 +5,10 @@ import { createInterface } from 'node:readline';
 import { once } from 'node:events';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createRoutingRequest, parseRoutingResponse, buildCatalog } from '../../src/routing.mjs';
+import { parseRoutingResponse, buildCatalog, fitRoutingRequest } from '../../src/routing.mjs';
+import { readRoutingConfig, applyModelScope } from '../../src/routing-config.mjs';
 import { PCCBridge } from '../../src/bridge.mjs';
+import { RoutingStrategies } from '../../src/strategies.mjs';
 import { beginCodexAudit } from './codex-audit.mjs';
 
 export const MAX_TASK_BYTES = 24 * 1024;
@@ -185,20 +187,28 @@ export async function getCodexCatalog({ executable, spawn = spawnChild, timeoutM
   finally { await app.stop(); }
 }
 
-export async function chooseCodexRoute(task, { getModels = getCodexCatalog, bridge, nonce = randomUUID() } = {}) {
+function codexIdentity(sessionID) {
+  if (typeof sessionID === 'string' && sessionID.trim()) return { host: 'codex', sessionID };
+}
+
+export async function chooseCodexRoute(task, {
+  getModels = getCodexCatalog, bridge, nonce = randomUUID(), strategies = new RoutingStrategies(),
+} = {}) {
   validateTask(task);
+  const identity = codexIdentity(process.env.CODEX_THREAD_ID);
+  const strategy = await strategies.current(identity);
   const pcc = bridge ?? new PCCBridge();
   try {
     const models = await getModels();
-    const catalog = buildCatalog(models, { requiredInputs: ['text'], requireTools: false, allowedProviders: ['codex'] })
+    let catalog = buildCatalog(models, { requiredInputs: ['text'], requireTools: false, allowedProviders: ['codex'] })
       // A delegation must name an explicit effort even when it matches the model default.
       .map(model => ({ ...model, routes: model.routes.filter(route => SUBAGENT_EFFORTS.has(route.variant)) }))
       .filter(model => model.routes.length > 0);
+    catalog = applyModelScope(catalog, readRoutingConfig('codex'), task);
     if (!catalog.length) throw routeError('No Codex model and reasoning effort pairs are available for delegation.');
-    const body = createRoutingRequest({ text: task, catalog, nonce });
-    if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_TASK_BYTES) throw routeError('Routing request exceeds the 24 KB limit.');
-    const response = await pcc.complete(body);
-    const parsed = parseRoutingResponse(response, catalog, nonce);
+    const { body, catalog: fitted } = fitRoutingRequest({ text: task, catalog, nonce, strategy });
+    const response = identity ? await pcc.complete(body, identity) : await pcc.complete(body);
+    const parsed = parseRoutingResponse(response, fitted, nonce);
     return { model: parsed.model.id, effort: parsed.model.variant, reason: parsed.reason };
   } finally {
     if (!bridge) await pcc.dispose();
@@ -217,18 +227,23 @@ async function readStdin() {
   return data;
 }
 
+function promptSubmitOutput() {
+  const workflow = fileURLToPath(new URL('./routing.md', import.meta.url));
+  const additionalContext = [
+    'Apply FM PCC Router only if you are already going to create a native subagent.',
+    'Respect explicit model or reasoning effort choices, and use your normal delegation rules.',
+    `Before spawning an eligible subagent, read the PCC routing workflow at ${JSON.stringify(workflow)}.`,
+    'Pass only the delegated task description to the router and supply its selected model and reasoning effort explicitly at spawn.',
+  ].join(' ');
+  return { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext } };
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   if (process.argv[2] === '--user-prompt-submit') {
-    // Drain the hook input without parsing or retaining the user's prompt.
-    for await (const _chunk of process.stdin) {}
-    const workflow = fileURLToPath(new URL('./routing.md', import.meta.url));
-    const additionalContext = [
-      'Apply FM PCC Router only if you are already going to create a native subagent.',
-      'Respect explicit model or reasoning effort choices, and use your normal delegation rules.',
-      `Before spawning an eligible subagent, read the PCC routing workflow at ${JSON.stringify(workflow)}.`,
-      'Pass only the delegated task description to the router and supply its selected model and reasoning effort explicitly at spawn.',
-    ].join(' ');
-    process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext } })}\n`);
+    // Drain hook input without interpreting or retaining conversation text.
+    for await (const chunk of process.stdin) { /* discard */ }
+    const output = promptSubmitOutput();
+    process.stdout.write(`${JSON.stringify(output)}\n`);
   } else {
     try {
       const task = await readStdin();

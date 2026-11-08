@@ -1,11 +1,26 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
+
+### Routing transport
+
+- Run one-shot `fm respond` calls in a temporary Terminal window and close the window after each routing decision.
+- Track bounded transcript state by host and chat. Restore OpenCode context from the current chat and keep only delegation descriptions for Codex.
+- Validate the PCC decision before updating local state and reuse validated results for duplicate OpenCode prompt events.
+- Define reusable routing strategies in a shared local config and select one per OpenCode chat or Codex thread. New chats retain the existing default routing policy.
+- Manage strategies and check PCC connectivity through one local `fm-pcc-router` command. Management commands and their results stay outside both chats.
+- Inspect local setup and storage with the read-only `fm-pcc-router doctor` command.
+- Wait for in-flight routing on the same chat before reading its latest transcript.
+- Limit model candidates per provider or by model allowlist, and fit large catalogs to the PCC request budget.
 
 ### Installation and removal
 
 - Clone the repository and run `node install.mjs` to install OpenCode, Codex, or both. Use the same installer with `--uninstall` to remove them.
 - Install the Codex skill and user hooks together. Preserve existing user hooks and remove only the router's entries during uninstall.
+- Install one shared launcher for either host and remove it with the last integration.
+- Add the launcher directory to zsh or Bash PATH when needed and remove the managed entry with the last integration.
+- Select one or both integrations with a terminal checkbox menu. Uninstall exits immediately when neither integration is installed.
+- Retry cleanup of owned launcher and PATH entries after an interrupted uninstall, and attempt Terminal window cleanup independently of process cleanup.
 
 ### Codex routing
 
@@ -15,7 +30,7 @@
 
 ### Documentation and licensing
 
-- Add separate OpenCode and Codex architecture diagrams that show how each integration uses `fm serve`.
+- Add separate OpenCode and Codex architecture diagrams that show the one-shot PCC call and local chat state.
 - License FM PCC Router under MIT and include the license with the installed skill and both integrations.
 
 ## 0.4.0

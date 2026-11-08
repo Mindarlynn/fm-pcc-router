@@ -4,27 +4,29 @@
 
 Uses Apple Foundation Models and Private Cloud Compute (PCC) to route OpenCode requests and select the model and reasoning effort of a Codex subagent.
 
-## How it uses `fm serve`
+## How routing works
 
-The router starts `fm serve` in a hidden Terminal window on the Mac. The bridge sends routing requests to Apple PCC. The selected provider runs the task's model inference.
+The router opens a temporary Terminal window and runs `fm respond --model pcc` once per routing decision. It supplies the routing input in a private transcript file and closes the window after the call. The selected provider runs the task's model inference.
+
+Both integrations apply the [local candidate limits](#optional-model-candidate-limits) and the [strategy selected for the chat](#routing-strategies) before sending a routing request. The shared CLI changes strategy settings outside the conversation.
 
 ### OpenCode
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-opencode-dark.png">
-  <img alt="OpenCode routing across local macOS, Apple PCC, and the selected provider" src="docs/architecture-opencode.png">
+  <img alt="OpenCode applies local candidate limits and a chat strategy, asks Apple PCC for a route, and switches to the selected provider and model" src="docs/architecture-opencode.png">
 </picture>
 
-OpenCode applies the route to the current session and reuses the server while the plugin is loaded. Quitting OpenCode Desktop closes the router's server and Terminal window. Terminal itself quits only if the router launched it and no windows remain.
+OpenCode uses the current chat's recent history and keeps routing state keyed to that chat. A validated route is applied to the current session. Deleting a chat clears its local routing state.
 
 ### Codex
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-codex-dark.png">
-  <img alt="Codex delegation through the local prompt hook and router, Apple PCC, and the selected model service" src="docs/architecture-codex.png">
+  <img alt="The Codex helper serializes PCC routing within a thread and returns model and effort settings for subagents that can run in parallel" src="docs/architecture-codex.png">
 </picture>
 
-The Codex helper starts the server when the parent requests a subagent route and shuts it down after selection.
+The Codex helper runs when the parent requests a subagent route. When a thread ID is available, routing calls for that thread wait for each other so the next call reads the latest saved delegation history. Once each call returns its model and effort, the parent can run the subagent tasks in parallel.
 
 ## Requirements
 
@@ -41,7 +43,9 @@ cd fm-pcc-router
 node install.mjs
 ```
 
-Choose **OpenCode**, **Codex**, or **both** when prompted. To skip the prompt, pass `--target opencode`, `--target codex`, or `--target both`.
+Use the arrow keys to move, **Space** to select one or both apps, and **Enter** to install. **Esc** cancels. To skip the menu, pass `--target opencode`, `--target codex`, or `--target both`. To upgrade an existing installation, run `node install.mjs --uninstall` for the affected hosts before installing the new version.
+
+Either target installs `fm-pcc-router` in `~/.local/bin` (or `$XDG_BIN_HOME`). If that directory is missing from `PATH`, setup appends it in your zsh or Bash startup file. Open a new terminal tab to use the command. For other shells, setup prints the full command path.
 
 ### After installation
 
@@ -72,13 +76,59 @@ To limit selection to specific connected providers, add this entry to the `plugi
 
 Only connected providers in this list are eligible. An empty list blocks all selection. Preserve unrelated settings and plugin entries when applying this example.
 
+## Optional model candidate limits
+
+By default, the router considers eligible models from every allowed provider. To limit the number of candidates per provider, create `~/.config/fm-pcc-router/routing.json` (under `$XDG_CONFIG_HOME` if set):
+
+```json
+{
+  "hosts": {
+    "opencode": { "maxModelsPerProvider": 12 },
+    "codex": { "maxModelsPerProvider": 12 }
+  }
+}
+```
+
+For a model allowlist, add a `models` array to either host with entries such as `{"providerID":"openai","id":"your-model-id"}`. Use the provider ID `codex` for Codex models. Omitting `models` keeps every eligible model in scope. The OpenCode provider restrictions still apply. An invalid file stops routing until it is corrected. If the request exceeds the PCC input budget, the router first removes optional labels and then balances the shortlist across providers, preserving eligible models named in the task within the configured scope.
+
+## Routing strategies
+
+New chats use `default`, the built-in routing strategy. To define reusable strategies for either app, create `~/.config/fm-pcc-router/strategies.json` (under `$XDG_CONFIG_HOME` if set):
+
+```json
+{
+  "fast": "Prefer low latency and low reasoning for routine tasks.",
+  "review": "Favor accuracy and deeper reasoning for security reviews and complex debugging."
+}
+```
+
+Run these commands in a terminal. Replace `<chat-ref>` with the target chat reference.
+
+```sh
+fm-pcc-router strategy list
+fm-pcc-router strategy current --chat '<chat-ref>'
+fm-pcc-router strategy use review --chat '<chat-ref>'
+fm-pcc-router strategy use default --chat '<chat-ref>'
+```
+
+- **OpenCode** — Use `opencode:<session-id>`. Run `opencode session list` from the chat's project to find its ID.
+- **Codex** — Use the `codex://threads/<id>` link copied from the chat with **Cmd+Option+L**. The selection applies to subagent routing.
+
+Each chat keeps its own selection and transcript. The management commands run outside the chat. Editing a strategy takes effect on the next routing request. If you remove an active strategy, select another one or reset the chat to `default`.
+
+Strategy names use lowercase letters, digits, and hyphens, start with a letter, and are at most 40 characters. Keep each strategy under 2,000 UTF-8 bytes and the file within 32 KB. PCC receives the selected strategy's instructions to rank eligible routes. Connected-provider restrictions, model eligibility, and explicit user choices still take precedence.
+
 ## Connection check
 
-Run `/pcc-test` in an OpenCode chat to check PCC connectivity. This diagnostic does not start a task. If it fails, check Apple Intelligence availability, PCC usage limits, and Terminal automation permission.
+Run `fm-pcc-router test` in a terminal to check PCC connectivity. The diagnostic uses a fixed probe. If it fails, check Apple Intelligence availability, PCC usage limits, and Terminal automation permission.
+
+Run `fm-pcc-router doctor` for a read-only check of installed integrations, Codex hook registration, local settings, and storage permissions. It prints status summaries without contacting PCC or showing conversation or strategy contents. Check hook trust in Codex Settings.
 
 ## Privacy
 
-For routing, OpenCode sends the current request and limited recent conversation text. Codex sends the delegation message or the task explicitly supplied to `fm-pcc-router`. Both send eligible model metadata to Apple PCC. The router does not read attachments, repository files, or Codex transcripts. Keep sensitive content out of delegation messages and use the automatic hook only where sending task text to Apple PCC is permitted.
+For routing, OpenCode sends the current request and limited recent conversation text. Codex sends the current delegation description and any bounded history of prior delegations from the same thread. Both send eligible model metadata and the selected custom strategy's instructions, when applicable, to Apple PCC. The router does not read attachments, repository files, or Codex transcripts. Keep sensitive content out of delegation messages and use the automatic hook only where sending task text to Apple PCC is permitted.
+
+Routing records are stored locally under `$XDG_STATE_HOME/fm-pcc-router/sessions` (default `~/.local/state/fm-pcc-router/sessions`). The saved context is limited to eight entries and 6,000 UTF-8 bytes per chat. The router ignores records older than seven days. To clear all saved routing history, remove this directory while the router is idle.
 
 ## Removal
 
@@ -86,7 +136,7 @@ For routing, OpenCode sends the current request and limited recent conversation 
 node install.mjs --uninstall
 ```
 
-Run this from the checkout and choose the apps to remove. Codex removal also removes the installed skill and hook entries. Restart the affected apps.
+The removal menu lists installed integrations. Select with **Space** and confirm with **Enter**. If neither integration is installed, setup reports that and exits. Codex removal also removes the installed skill and hook entries. The last integration removes the shared command and its managed PATH entry. Restart the affected apps.
 
 For development and testing, see the [contribution guide](.github/CONTRIBUTING.md). See the [changelog](docs/CHANGELOG.md) for release history.
 

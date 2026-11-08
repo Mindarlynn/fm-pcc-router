@@ -1,198 +1,239 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { access, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { PCCBridge, validatePCCReply } from '../src/bridge.mjs';
-import { shellQuote, parseTerminalSession } from '../src/terminal.mjs';
+import { createRoutingRequest } from '../src/routing.mjs';
+import { withSession } from '../src/session.mjs';
+import { parseTerminalSession, respondArguments, shellQuote } from '../src/terminal.mjs';
 
-function makeBridge(options = {}) {
-  return new PCCBridge({ checkAvailable: async () => {}, ...options });
+const catalog = [{ providerID: 'provider', id: 'model', routes: [{ route_id: 'route-1' }] }];
+const chat = (sessionID, messageID, host = 'opencode') => ({ host, sessionID, messageID });
+const input = (text, nonce, context = [], candidates = catalog) => createRoutingRequest({ text, nonce, context, catalog: candidates });
+
+function evidence(transcript) {
+  assert.equal(transcript.modelName, 'pcc');
+  assert.equal(transcript.transcript.version, '1.1');
+  const [instructions, ...entries] = transcript.transcript.transcript.entries;
+  assert.equal(instructions.role, 'instructions');
+  return entries.map(entry => JSON.parse(entry.contents[0].text));
 }
 
-function response(nonce, overrides = {}) {
-  return { model: 'pcc', choices: [{ finish_reason: 'stop', message: {
-    content: JSON.stringify({ ok: true, nonce }), refusal: null,
-  } }], ...overrides };
+function mockRespond(calls) {
+  return async (transcript) => {
+    const messages = evidence(transcript);
+    calls.push(messages);
+    const { nonce, catalog } = messages.at(-1);
+    return { nonce, route_id: catalog[0].routes[0].route_id, reason: 'Suitable for this task.' };
+  };
 }
 
-test('PCC validation accepts only the current complete PCC reply', () => {
-  assert.deepEqual(validatePCCReply(response('current'), 'current'), { model: 'pcc', ok: true });
-  const wrongField = response('current');
-  wrongField.choices[0].message.content = JSON.stringify({ ok: true, nonce: 'current', extra: true });
-  const refusal = response('current');
-  refusal.choices[0].message.refusal = 'no';
-  const malformed = response('current');
-  malformed.choices[0].message.content = '```json\n{}\n```';
-  for (const invalid of [response('stale'), response('current', { model: 'system' }),
-    response('current', { choices: [] }), response('current', { choices: [{ finish_reason: 'length' }] }),
-    wrongField, refusal, malformed]) {
-    assert.throws(() => validatePCCReply(invalid, 'current'));
-  }
-});
+async function fixture(t) {
+  const root = await mkdtemp(join(tmpdir(), 'fm-pcc-session-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const calls = [];
+  const bridge = new PCCBridge({ sessionRoot: root, respond: mockRespond(calls) });
+  return { root, calls, bridge };
+}
 
-test('startup checks the PCC executable before creating or launching the service', async () => {
-  let launches = 0;
-  const bridge = new PCCBridge({ checkAvailable: async () => { throw new Error('missing fm'); },
-    launch: async () => { launches++; }, stop: async () => {} });
-  await assert.rejects(bridge.probe(), /missing fm/);
-  assert.equal(launches, 0);
-  await bridge.dispose();
-});
+function deferred() {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return { promise, resolve };
+}
 
-test('the shared bridge rejects local-model or streaming routing requests before launch', async () => {
-  let launches = 0;
-  const bridge = makeBridge({ launch: async () => { launches++; }, stop: async () => {} });
-  await assert.rejects(bridge.complete({ model: 'system', stream: false }), /Only non-streaming PCC/);
-  await assert.rejects(bridge.complete({ model: 'pcc', stream: true }), /Only non-streaming PCC/);
-  assert.equal(launches, 0);
-  await bridge.dispose();
-});
-
-test('shell quoting keeps quotes and metacharacters literal', () => {
-  assert.equal(shellQuote("a'b;$HOME`id`"), "'a'\\''b;$HOME`id`'");
-});
-
-test('Terminal identity parser rejects missing or unsafe window identities', () => {
-  assert.deepEqual(parseTerminalSession('123\n/dev/ttys000\n'), { windowID: 123, tty: '/dev/ttys000' });
+test('Terminal ownership parsing and command arguments only use identifiers, paths, and a fixed instruction', () => {
+  assert.deepEqual(parseTerminalSession('123\n/dev/ttys000\n321\n'), {
+    windowID: 123, tty: '/dev/ttys000', terminalPID: 321,
+  });
   for (const value of ['', '0\n/dev/ttys000', '123\nother', 'any\n/dev/ttys000']) {
     assert.throws(() => parseTerminalSession(value));
   }
+  assert.equal(parseTerminalSession('123\n/dev/ttys000\n2147483648').terminalPID, undefined);
+  assert.equal(shellQuote("a'b;$HOME`id`"), "'a'\\''b;$HOME`id`'");
+  assert.deepEqual(respondArguments('/tmp/input.json', '/tmp/schema.json').slice(0, -1), [
+    'respond', '--model', 'pcc', '--no-stream', '--resume', '/tmp/input.json', '--schema', '/tmp/schema.json',
+  ]);
 });
 
-test('only a valid Terminal process identity can authorize app termination', () => {
-  const window = '123\n/dev/ttys000';
-  assert.deepEqual(parseTerminalSession(window + '\n234'), { windowID: 123, tty: '/dev/ttys000', terminalPID: 234 });
-  for (const pid of ['0', '1', '2147483648', 'other']) {
-    assert.equal(parseTerminalSession(window + '\n' + pid).terminalPID, undefined);
+test('OpenCode restores each chat from its own authoritative history, including after a rewind', async t => {
+  const { bridge, calls, root } = await fixture(t);
+  await bridge.complete(input('alpha', 'n1'), chat('a', '1'));
+  await bridge.complete(input('bravo', 'n2'), chat('b', '1'));
+  await bridge.complete(input('follow-up a', 'n3', [{ role: 'user', text: 'alpha' }]), chat('a', '2'));
+  await bridge.complete(input('follow-up b', 'n4', [{ role: 'user', text: 'bravo' }]), chat('b', '2'));
+  await bridge.complete(input('rewound a', 'n5'), chat('a', '3'));
+  assert.deepEqual(calls[2][0].history, [{ role: 'user', text: 'alpha' }]);
+  assert.deepEqual(calls[3][0].history, [{ role: 'user', text: 'bravo' }]);
+  assert.equal(calls[4].length, 1);
+  const state = await readdir(root);
+  assert.equal(state.length, 2);
+  for (const name of state) assert.equal((await stat(join(root, name))).mode & 0o777, 0o600);
+});
+
+test('Codex resumes only prior delegation tasks across bridge instances, with host-isolated IDs', async t => {
+  const { bridge, calls, root } = await fixture(t);
+  await bridge.complete(input('OpenCode only', 'n1'), chat('same', '1'));
+  await bridge.complete(input('delegation A', 'n2'), chat('same', undefined, 'codex'));
+  const next = new PCCBridge({ sessionRoot: root, respond: mockRespond(calls) });
+  await next.complete(input('delegation B', 'n3'), chat('same', undefined, 'codex'));
+  await next.complete(input('fresh codex chat', 'n4'), chat('new', undefined, 'codex'));
+  assert.deepEqual(calls[2][0].history, [{ role: 'user', text: 'delegation A' }]);
+  assert.equal(calls[3].length, 1);
+  assert.doesNotMatch(JSON.stringify(calls[2]), /OpenCode only/);
+});
+
+test('concurrent Codex bridges serialize one chat and resume its latest committed transcript', async t => {
+  const { root, calls } = await fixture(t);
+  const identity = chat('concurrent', undefined, 'codex');
+  const started = deferred();
+  const release = deferred();
+  const holder = new PCCBridge({ sessionRoot: root, respond: async (...args) => {
+    started.resolve();
+    await release.promise;
+    return mockRespond(calls)(...args);
+  } });
+  const waiter = new PCCBridge({ sessionRoot: root, respond: mockRespond(calls) });
+  const first = holder.complete(input('delegation A', 'n1'), identity);
+  await started.promise;
+  const second = waiter.complete(input('delegation B', 'n2'), identity);
+  try {
+    assert.equal(await Promise.race([second, delay(150, 'pending')]), 'pending');
+    assert.deepEqual(calls, []);
+  } finally {
+    release.resolve();
+    await Promise.allSettled([first, second]);
   }
+  await Promise.all([first, second]);
+  assert.deepEqual(calls[1][0].history, [{ role: 'user', text: 'delegation A' }]);
+  assert.equal((await readdir(root)).length, 1);
 });
 
-test('a surviving OpenCode backend cleans its bridge when the recorded desktop process exits',
-  { timeout: 5_000 }, async (t) => {
-    const desktop = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
-    t.after(() => { desktop.kill(); });
-    await once(desktop, 'spawn');
-    let stopped = 0;
-    let resolveCleanup;
-    const cleanup = new Promise(resolve => { resolveCleanup = resolve; });
-    const bridge = makeBridge({
-      launch: async (state) => { state.desktopPID = desktop.pid; },
-      stop: async () => { stopped++; },
-      request: async () => ({ models: [{ name: 'pcc', available: true }] }),
-      onDesktopExit: () => resolveCleanup(bridge.dispose()),
-    });
-    t.after(() => bridge.dispose());
-    const state = await bridge.ensureStarted();
-    assert.equal(stopped, 0);
-    const exited = once(desktop, 'exit');
-    desktop.kill();
-    await exited;
-    // The bridge's unref'ed watcher cannot keep the test process alive by itself.
-    const deadline = new AbortController();
-    try {
-      await Promise.race([
-        cleanup,
-        delay(4_000, undefined, { signal: deadline.signal }).then(() => {
-          assert.fail('The bridge did not clean up after the desktop exited.');
-        }),
-      ]);
-    } finally {
-      deadline.abort();
-    }
-    assert.equal(stopped, 1);
-    await assert.rejects(access(state.dir), { code: 'ENOENT' });
+test('contention has a deadline and disposing a waiter preserves the owner’s lock', async t => {
+  const { root, calls } = await fixture(t);
+  const identity = chat('contention', undefined, 'codex');
+  const started = deferred();
+  const release = deferred();
+  const holder = withSession(root, identity, () => {
+    started.resolve();
+    return release.promise;
   });
-
-test('bridge starts lazily, uses PCC only, serializes probes, and cleans its private directory', async () => {
-  let launches = 0;
-  let stops = 0;
-  let active = 0;
-  let peak = 0;
-  let owned;
-  const bridge = makeBridge({
-    launch: async (state) => { launches++; owned = state; },
-    stop: async () => { stops++; },
-    request: async (_socket, path, options) => {
-      if (path === '/health') return { models: [{ name: 'pcc', available: true }] };
-      assert.equal(options.body.model, 'pcc');
-      assert.equal(options.body.stream, false);
-      active++; peak = Math.max(peak, active);
-      await delay(5);
-      active--;
-      const nonce = options.body.messages[0].content.match(/nonce ([\w-]+)\./)[1];
-      return response(nonce);
-    },
-  });
-  assert.equal(launches, 0);
-  const results = await Promise.all([bridge.probe(), bridge.probe(), bridge.probe()]);
-  assert.equal(launches, 1);
-  assert.equal(peak, 1);
-  assert.equal((await stat(owned.dir)).mode & 0o777, 0o700);
-  assert(results.every((result) => result.ok && result.model === 'pcc'));
-  await Promise.all([bridge.dispose(), bridge.dispose()]);
-  assert.equal(stops, 1);
-  await assert.rejects(access(owned.dir), { code: 'ENOENT' });
-  await assert.rejects(bridge.probe(), /shut down/);
-});
-
-test('startup failure cleans up and permits a later explicit retry', async () => {
-  let launches = 0;
-  let stops = 0;
-  const bridge = makeBridge({
-    launch: async () => { if (++launches === 1) throw new Error('permission denied'); },
-    stop: async () => { stops++; },
-    request: async (_socket, path, options) => path === '/health'
-      ? { models: [{ name: 'pcc', available: true }] }
-      : response(options.body.messages[0].content.match(/nonce ([\w-]+)\./)[1]),
-  });
-  await assert.rejects(bridge.probe(), /permission denied/);
-  assert.equal(stops, 1);
-  assert.equal((await bridge.probe()).model, 'pcc');
-  await bridge.dispose();
-  assert.equal(stops, 2);
-});
-
-test('PCC unavailable or exhausted never falls back to system', async () => {
-  for (const model of [{ name: 'pcc', available: false },
-    { name: 'pcc', available: true, quota: { limit_reached: true } }]) {
-    let inference = 0;
-    const bridge = makeBridge({
-      launch: async () => {}, stop: async () => {},
-      request: async (_socket, path) => {
-        if (path !== '/health') inference++;
-        return { models: [model, { name: 'system', available: true }] };
-      },
-    });
-    await assert.rejects(bridge.probe(), /PCC is unavailable/);
-    assert.equal(inference, 0);
-    await bridge.dispose();
+  await started.promise;
+  try {
+    const waiter = new PCCBridge({ sessionRoot: root, respond: mockRespond(calls) });
+    const cancelled = assert.rejects(waiter.complete(input('cancelled', 'n1'), identity), /shut down/);
+    await assert.rejects(withSession(root, identity, () => assert.fail('Contended task ran'), {
+      lockWaitMs: 150,
+    }), /Timed out waiting/);
+    await waiter.dispose();
+    await cancelled;
+    assert.deepEqual(calls, []);
+    assert.match((await readdir(root)).join(','), /^[a-f0-9]{64}\.lock$/);
+  } finally {
+    release.resolve();
+    await holder;
   }
+  assert.deepEqual(await readdir(root), []);
 });
 
-test('startup deadline fails instead of waiting indefinitely', async () => {
-  const bridge = makeBridge({ launch: async () => {}, stop: async () => {}, startupMs: 0,
-    request: async () => { throw new Error('no socket'); } });
-  await assert.rejects(bridge.probe(), /Timed out waiting for the PCC server/);
-  await bridge.dispose();
+test('a shlock filesystem error is surfaced without treating it as contention', async t => {
+  const { root } = await fixture(t);
+  const identity = chat('blocked', undefined, 'codex');
+  const key = createHash('sha256').update(JSON.stringify([identity.host, identity.sessionID])).digest('hex');
+  await mkdir(join(root, key + '.lock'));
+  await assert.rejects(withSession(root, identity, () => assert.fail('Task ran without the lock'), {
+    lockWaitMs: 150,
+  }), { message: 'Could not lock the PCC chat state.' });
 });
 
-test('dispose cancels a pending PCC call before cleaning the server', async () => {
-  let requestStarted;
-  const ready = new Promise((resolve) => { requestStarted = resolve; });
-  let stopped = false;
-  const bridge = makeBridge({ launch: async () => {}, stop: async () => { stopped = true; },
-    request: async (_socket, path, { signal }) => {
-      if (path === '/health') return { models: [{ name: 'pcc', available: true }] };
-      requestStarted();
-      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
-    },
+test('only current validated routes advance state and duplicate messages reuse the decision', async t => {
+  const { bridge, calls, root } = await fixture(t);
+  await bridge.complete(input('task one', 'n1'), chat('a', '1'));
+  const file = join(root, (await readdir(root))[0]);
+  const first = await readFile(file, 'utf8');
+  const cached = await bridge.complete(input('task one', 'n2'), chat('a', '1'));
+  assert.equal(JSON.parse(cached.choices[0].message.content).nonce, 'n2');
+  assert.equal(calls.length, 1);
+  assert.equal(await readFile(file, 'utf8'), first);
+  const bad = new PCCBridge({ sessionRoot: root, respond: async () => ({ nonce: 'wrong', route_id: 'route-1', reason: 'Invalid.' }) });
+  await assert.rejects(bad.complete(input('rejected', 'n3'), chat('a', '2')), /Invalid PCC routing decision/);
+  assert.equal(await readFile(file, 'utf8'), first);
+  await bridge.complete(input('task two', 'n4'), chat('a', '2'));
+  await assert.rejects(bridge.complete(input('task one', 'n5'), chat('a', '1')), /superseded/);
+  assert.equal(calls.length, 2);
+  await bridge.forget(chat('a'));
+  assert.deepEqual(await readdir(root), []);
+});
+
+test('changes to the live catalog invalidate a cached decision for the same message', async t => {
+  const { bridge, calls } = await fixture(t);
+  await bridge.complete(input('task', 'n1'), chat('a', '1'));
+  const candidates = [{ providerID: 'new', id: 'new', routes: [{ route_id: 'route-2' }] }];
+  const reply = await bridge.complete(input('task', 'n2', [], candidates), chat('a', '1'));
+  assert.equal(JSON.parse(reply.choices[0].message.content).route_id, 'route-2');
+  assert.equal(calls.length, 2);
+});
+
+test('strategy edits reroute the same message while retaining its chat context', async t => {
+  const { bridge, calls } = await fixture(t);
+  const identity = chat('strategy-cache', '1');
+  const request = (nonce, instructions) => createRoutingRequest({
+    text: 'Follow up', nonce, catalog, context: [{ role: 'user', text: 'Previous task' }],
+    strategy: { id: 'review', instructions },
   });
-  const pending = bridge.probe();
-  const rejected = assert.rejects(pending, /shut down/);
+  await bridge.complete(request('n1', 'Prefer depth.'), identity);
+  await bridge.complete(request('n2', 'Prefer depth.'), identity);
+  await bridge.complete(request('n3', 'Prefer speed.'), identity);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1][0].history, [{ role: 'user', text: 'Previous task' }]);
+});
+
+test('stateless calls and probes do not create chat records', async t => {
+  const { root } = await fixture(t);
+  const bridge = new PCCBridge({ sessionRoot: root, respond: async (transcript) => {
+    const [{ nonce, catalog }] = evidence(transcript);
+    return catalog ? { nonce, route_id: 'route-1', reason: 'Good fit.' } : { nonce, ok: true };
+  } });
+  assert.equal((await bridge.complete(input('task', 'n1'))).model, 'pcc');
+  assert.equal((await bridge.probe()).ok, true);
+  assert.deepEqual(await readdir(root), []);
+  assert.throws(() => validatePCCReply({ model: 'system', choices: [] }, 'n1'), /did not complete/);
+});
+
+test('a relative session path fails before making a PCC request', async () => {
+  const bridge = new PCCBridge({ sessionRoot: 'relative-session-path', respond: async () => {
+    assert.fail('The bridge must not send a request for an invalid state path.');
+  } });
+  await assert.rejects(bridge.complete(input('task', 'n1'), chat('a', '1')), /must be an absolute path/);
+});
+
+test('Codex preserves the current routing input when older chat context exceeds the budget', async t => {
+  const { bridge, calls } = await fixture(t);
+  const identity = chat('budget', undefined, 'codex');
+  await bridge.complete(input('p'.repeat(5_900), 'n1'), identity);
+  const current = 'n'.repeat(18_000);
+  await bridge.complete(input(current, 'n2'), identity);
+  assert.equal(calls[1].length, 1);
+  assert.equal(calls[1][0].text, current);
+});
+
+test('dispose aborts the current invocation and keeps queued work from launching', async () => {
+  const started = new EventTarget();
+  const ready = once(started, 'ready');
+  let calls = 0;
+  const bridge = new PCCBridge({ respond: async (_transcript, _schema, signal) => {
+    calls++;
+    started.dispatchEvent(new Event('ready'));
+    return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  } });
+  const first = assert.rejects(bridge.complete(input('first', 'n1')), /shut down/);
+  const second = assert.rejects(bridge.complete(input('second', 'n2')), /shut down/);
   await ready;
   await bridge.dispose();
-  await rejected;
-  assert.equal(stopped, true);
+  await Promise.all([first, second]);
+  assert.equal(calls, 1);
 });

@@ -6,7 +6,7 @@ Confirm the current runtime exposes a native subagent tool that accepts explicit
 
 Run `node` with the absolute path to `codex-route.mjs` beside this file and the argument `--audit`. Pass only the task description on standard input. Use a quoted here-document delimiter that does not appear in the task, or an equivalent literal input mechanism. Keep chat history, attachments, file contents, and credentials out of the input.
 
-The helper needs local access to start Codex App Server and Terminal.app. Use the host's normal approval mechanism if the sandbox prevents local execution.
+The helper needs local access to start Codex App Server and run the PCC client. Use the host's normal approval mechanism if the sandbox prevents local execution. When Codex supplies `CODEX_THREAD_ID`, the helper uses it locally to scope PCC routing state to that thread. Without a thread ID, the helper routes in one-shot mode.
 
 Use the returned `model` and `effort` as explicit spawn settings. Map `effort` to `reasoning_effort` when the tool uses that field. Start one native subagent for the task with an unpinned role that honors both values. Give it the task and relevant constraints without forking the full chat.
 

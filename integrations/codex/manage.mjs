@@ -14,9 +14,9 @@ const registration = '.fm-pcc-router-owned.json';
 const skill = 'skills/fm-pcc-router';
 const bundledSkill = join(integration, skill);
 const files = [
-  'LICENSE',
+  'LICENSE', 'cli.mjs',
   ...['codex-route.mjs', 'codex-audit.mjs', 'routing.md'].map(file => join(integration, file)),
-  ...['bridge.mjs', 'http.mjs', 'routing.mjs', 'terminal.mjs'].map(file => join('src', file)),
+  ...['bridge.mjs', 'doctor.mjs', 'routing-config.mjs', 'routing.mjs', 'session.mjs', 'strategies.mjs', 'terminal.mjs'].map(file => join('src', file)),
   join(bundledSkill, 'SKILL.md'),
   join(bundledSkill, 'LICENSE'),
 ];

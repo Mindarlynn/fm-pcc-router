@@ -1,45 +1,31 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const exec = promisify(execFile);
-export const shellQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+export const shellQuote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 
 export function parseTerminalSession(value) {
-  const [id, tty, terminalPID, desktopPID] = value.trim().split(/\r?\n/);
-  if (!/^\d+$/.test(id) || Number(id) < 1 || !/^\/dev\/tty[\w]+$/.test(tty ?? '')) {
+  const [id, tty, pid] = value.trim().split(/\r?\n/);
+  if (!/^\d+$/.test(id) || !Number.isSafeInteger(Number(id)) || Number(id) < 1 || !/^\/dev\/tty[\w]+$/.test(tty ?? '')) {
     throw new Error('Could not determine the Terminal session identifier.');
   }
-  const session = { windowID: Number(id), tty };
-  for (const [key, pid] of Object.entries({ terminalPID, desktopPID })) {
-    if (/^[1-9]\d*$/.test(pid ?? '') && Number(pid) > 1 && Number(pid) <= 0x7fffffff) {
-      session[key] = Number(pid);
-    }
-  }
-  return session;
+  const terminalPID = Number(pid);
+  return { windowID: Number(id), tty,
+    ...(/^[1-9]\d*$/.test(pid ?? '') && terminalPID > 1 && terminalPID <= 0x7fffffff ? { terminalPID } : {}) };
 }
 
 const LAUNCH = `use framework "AppKit"
 use scripting additions
 
-on appPID(bundleID)
-    set runningApps to current application's NSRunningApplication's runningApplicationsWithBundleIdentifier:bundleID
-    if (runningApps's |count|() as integer) is not 1 then return 0
-    return runningApps's firstObject()'s processIdentifier() as integer
-end appPID
-
 on run argv
     set launchCommand to item 1 of argv
     set windowLabel to item 2 of argv
     set sessionFile to item 3 of argv
-    set ownTerminal to false
-    set desktopPID to 0
-    if item 4 of argv is "yes" then
-        set desktopPID to my appPID("ai.opencode.desktop")
-        set ownTerminal to not (application "Terminal" is running)
-    end if
+    set ownTerminal to not (application "Terminal" is running)
     tell application "Terminal"
         set ownedTab to do script launchCommand
         set custom title of ownedTab to windowLabel
@@ -48,17 +34,19 @@ on run argv
             if tty of selected tab of ownedWindow is ownedTTY then
                 set ownedID to id of ownedWindow
                 set terminalPID to 0
-                if ownTerminal then set terminalPID to my appPID("com.apple.Terminal")
-                set sessionText to (ownedID as text) & linefeed & ownedTTY & linefeed & terminalPID & linefeed & desktopPID
-                set sessionHandle to open for access (POSIX file sessionFile) with write permission
+                if ownTerminal then
+                    set apps to current application's NSRunningApplication's runningApplicationsWithBundleIdentifier:"com.apple.Terminal"
+                    if (apps's |count|() as integer) is 1 then set terminalPID to apps's firstObject()'s processIdentifier() as integer
+                end if
+                set sessionText to (ownedID as text) & linefeed & ownedTTY & linefeed & terminalPID
+                set handle to open for access (POSIX file sessionFile) with write permission
                 try
-                    set eof of sessionHandle to 0
-                    write sessionText to sessionHandle as «class utf8»
+                    write sessionText to handle as «class utf8»
                 on error errorText number errorNumber
-                    close access sessionHandle
+                    close access handle
                     error errorText number errorNumber
                 end try
-                close access sessionHandle
+                close access handle
                 set visible of ownedWindow to false
                 return sessionText
             end if
@@ -80,84 +68,139 @@ on run argv
     tell application "Terminal"
         if not (exists window id ownedID) then return
         set ownedWindow to window id ownedID
-        if (count tabs of ownedWindow) is not 1 then return
-        set ownedTab to selected tab of ownedWindow
-        if tty of ownedTab is not ownedTTY then error "The PCC managed window TTY has changed."
-        if custom title of ownedTab is not windowLabel then error "The PCC managed window title has changed."
-        if busy of ownedTab then error "The PCC managed window is busy."
-        close ownedWindow
-        if terminalPID is 0 or (count windows) is not 0 then return
+        repeat 20 times
+            if (count tabs of ownedWindow) is not 1 then return
+            set ownedTab to selected tab of ownedWindow
+            if tty of ownedTab is not ownedTTY or custom title of ownedTab is not windowLabel then return
+            if not (busy of ownedTab) then
+                close ownedWindow
+                if terminalPID is 0 or (count windows) is not 0 then return
+                set terminalProcess to current application's NSRunningApplication's runningApplicationWithProcessIdentifier:terminalPID
+                if terminalProcess is not missing value and (terminalProcess's bundleIdentifier() as text) is "com.apple.Terminal" then
+                    terminalProcess's terminate()
+                end if
+                return
+            end if
+            delay 0.05
+        end repeat
+        error "The PCC managed window is busy."
     end tell
-    set terminalProcess to current application's NSRunningApplication's runningApplicationWithProcessIdentifier:terminalPID
-    if terminalProcess is missing value then return
-    if (terminalProcess's bundleIdentifier() as text) is "com.apple.Terminal" then
-        terminalProcess's terminate()
-    end if
 end run
 `;
 
-export async function launchTerminalServer(state, signal) {
-  if (process.platform !== 'darwin') throw new Error('This feature requires macOS 27 or later.');
-  const scriptPath = join(state.dir, 'serve.sh');
-  const script = `#!/bin/zsh -f\numask 077\nprintf '%s\\n' "$$" > ${shellQuote(join(state.dir, 'server.pid'))}\nexec /usr/bin/fm serve --socket ${shellQuote(state.socket)} > /dev/null 2>&1\n`;
-  await writeFile(scriptPath, script, { mode: 0o700, flag: 'wx' });
-  const appleScript = join(state.dir, 'launch.applescript');
-  const sessionFile = join(state.dir, 'session.txt');
-  await writeFile(sessionFile, '', { mode: 0o600, flag: 'wx' });
-  await writeFile(appleScript, LAUNCH, { mode: 0o600, flag: 'wx' });
-  try {
-    const { stdout } = await exec('/usr/bin/osascript', [appleScript,
-      `/bin/zsh -f ${shellQuote(scriptPath)}`, state.label, sessionFile, state.quitOwnedTerminal ? 'yes' : 'no'],
-    { signal, timeout: 30_000, maxBuffer: 16_384 });
-    Object.assign(state, parseTerminalSession(stdout));
-  } catch (cause) {
-    throw new Error('Failed to start the Terminal PCC server. Check OpenCode’s Terminal automation permission.', { cause });
-  }
+export function respondArguments(input, schema) {
+  return ['respond', '--model', 'pcc', '--no-stream', '--resume', input, '--schema', schema,
+    'Produce the requested JSON decision using the latest routing input in this transcript.'];
 }
 
-export async function stopTerminalServer(state) {
+async function stopRespond(pidFile, input) {
   let pid;
   try {
-    const value = (await readFile(join(state.dir, 'server.pid'), 'utf8')).trim();
-    if (!/^\d+$/.test(value) || Number(value) < 2) throw new Error('Invalid server PID.');
-    pid = Number(value);
+    pid = Number((await readFile(pidFile, 'utf8')).trim());
   } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
+    if (error.code === 'ENOENT') return;
+    throw error;
   }
-  if (pid) {
-    let command;
-    try {
-      command = (await exec('/bin/ps', ['-p', String(pid), '-o', 'command='], { timeout: 3000 })).stdout.trim();
-    } catch (error) {
-      if (error.code !== 1) throw error;
+  if (!Number.isInteger(pid) || pid < 2 || pid > 0x7fffffff) throw new Error('Invalid PCC process ID.');
+  let command;
+  try {
+    command = (await exec('/bin/ps', ['-p', String(pid), '-o', 'command='], { timeout: 2000 })).stdout.trim();
+  } catch (error) {
+    if (error.code === 1) return;
+    throw error;
+  }
+  if (!/^((\/usr\/bin\/)?fm) respond /.test(command) || !command.includes(`--resume ${input} `)) {
+    throw new Error('The PCC process identity could not be verified.');
+  }
+  try { process.kill(pid, 'SIGTERM'); } catch (error) {
+    if (error.code === 'ESRCH') return;
+    throw error;
+  }
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try { process.kill(pid, 0); } catch (error) {
+      if (error.code === 'ESRCH') return;
+      throw error;
     }
-    if (command) {
-      if (!command.includes(`fm serve --socket ${state.socket}`)) {
-        throw new Error('The server PID owner could not be verified, so it was not stopped.');
+    await delay(50);
+  }
+  throw new Error('The PCC response process did not stop.');
+}
+
+export async function respondInTerminal(transcript, schema, signal, { timeoutMs = 45_000 } = {}) {
+  if (process.platform !== 'darwin') throw new Error('This feature requires macOS 27 or later.');
+  signal.throwIfAborted();
+  const dir = await mkdtemp('/private/tmp/fm-pcc-');
+  const input = join(dir, 'input.json');
+  const schemaFile = join(dir, 'schema.json');
+  const launch = join(dir, 'launch.applescript');
+  const close = join(dir, 'close.applescript');
+  const session = join(dir, 'session.txt');
+  const pidFile = join(dir, 'respond.pid');
+  const job = join(dir, 'respond.zsh');
+  const runner = join(dir, 'run.zsh');
+  const statusFile = join(dir, 'status');
+  const output = join(dir, 'output.json');
+  const label = `FM PCC Router ${randomUUID()}`;
+  let identity;
+  let launched = false;
+  let completed = false;
+  let failed = false;
+
+  try {
+    const args = respondArguments(input, schemaFile).map(shellQuote).join(' ');
+    const write = (path, contents) => writeFile(path, contents, { mode: 0o600, flag: 'wx' });
+    await Promise.all([
+      write(input, JSON.stringify(transcript)),
+      write(schemaFile, JSON.stringify(schema)),
+      write(launch, LAUNCH), write(close, CLOSE), write(session, ''),
+      write(job, `printf '%s\\n' "$$" > ${shellQuote(pidFile)}\nexec /usr/bin/fm ${args}\n`),
+      write(runner, `umask 077\n/bin/zsh -f ${shellQuote(job)} > ${shellQuote(output)} 2>/dev/null\nprintf '%s\\n' "$?" > ${shellQuote(statusFile + '.tmp')}\n/bin/mv ${shellQuote(statusFile + '.tmp')} ${shellQuote(statusFile)}\n`),
+    ]);
+    signal.throwIfAborted();
+    launched = true;
+    // Let AppleScript finish recording the window before handling cancellation.
+    const { stdout } = await exec('/usr/bin/osascript', [launch, `/bin/zsh -f ${shellQuote(runner)}`, label, session],
+      { timeout: 15_000, maxBuffer: 8192 });
+    identity = parseTerminalSession(stdout);
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      signal.throwIfAborted();
+      let status;
+      try { status = (await readFile(statusFile, 'utf8')).trim(); } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
       }
-      process.kill(pid, 'SIGTERM');
-      for (let i = 0; i < 40; i++) {
-        try { process.kill(pid, 0); } catch (error) {
-          if (error.code === 'ESRCH') { pid = undefined; break; }
-          throw error;
+      if (status !== undefined) {
+        completed = true;
+        if (status !== '0') throw new Error('PCC respond failed in Terminal. Check Apple Intelligence availability and usage limits.');
+        break;
+      }
+      if (Date.now() >= deadline) throw new Error('Timed out waiting for PCC respond.');
+      await delay(80, undefined, { signal });
+    }
+    if ((await stat(output)).size > 65_536) throw new Error('The PCC response exceeded the output limit.');
+    try { return JSON.parse(await readFile(output, 'utf8')); } catch {
+      throw new Error('Invalid structured response from PCC.');
+    }
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    let cleanupError;
+    if (launched) {
+      if (!completed) {
+        try { await stopRespond(pidFile, input); } catch (error) { cleanupError = error; }
+      }
+      try {
+        const recorded = identity ?? await readFile(session, 'utf8').then(value => value.trim() ? parseTerminalSession(value) : undefined);
+        if (recorded) {
+          await exec('/usr/bin/osascript', [close, label, String(recorded.windowID), recorded.tty,
+            String(recorded.terminalPID ?? 0)], { timeout: 5000, maxBuffer: 8192 });
         }
-        await delay(50);
+      } catch (error) {
+        cleanupError ??= error;
       }
-      if (pid) throw new Error('The PCC server did not stop, so the managed window was kept open.');
     }
+    try { await rm(dir, { recursive: true, force: true }); } catch (error) { cleanupError ??= error; }
+    if (!failed && cleanupError) throw cleanupError;
   }
-  const closeScript = join(state.dir, 'close.applescript');
-  if (!state.windowID || !state.tty) {
-    try {
-      const session = await readFile(join(state.dir, 'session.txt'), 'utf8');
-      if (session.trim()) Object.assign(state, parseTerminalSession(session));
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
-  }
-  if (!state.windowID || !state.tty) return;
-  await writeFile(closeScript, CLOSE, { mode: 0o600 });
-  await exec('/usr/bin/osascript', [closeScript, state.label, String(state.windowID), state.tty,
-    String(state.quitOwnedTerminal ? state.terminalPID ?? 0 : 0)],
-    { timeout: 5000, maxBuffer: 8192 });
 }
