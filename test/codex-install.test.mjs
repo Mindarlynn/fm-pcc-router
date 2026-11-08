@@ -23,13 +23,14 @@ async function fixture(t) {
   const binHome = join(root, 'bin');
   const launcher = join(binHome, 'fm-pcc-router');
   const shellFile = join(root, '.zshrc');
+  const stateHome = join(root, 'state');
   const env = { ...process.env, CODEX_HOME: codexHome, XDG_DATA_HOME: dataHome, XDG_CONFIG_HOME: configHome,
-    XDG_BIN_HOME: binHome, XDG_STATE_HOME: join(root, 'state'), PATH: `${dirname(process.execPath)}:${process.env.PATH}`,
+    XDG_BIN_HOME: binHome, XDG_STATE_HOME: stateHome, PATH: `${dirname(process.execPath)}:${process.env.PATH}`,
     HOME: root, ZDOTDIR: root, SHELL: '/bin/zsh' };
   return {
     root, installed, hooksPath, configHome, dataHome, skill: join(codexHome, 'skills/fm-pcc-router'),
     openCode: join(configHome, 'opencode/plugins/fm-pcc-router'),
-    launcher, shellFile,
+    launcher, shellFile, stateHome,
     command: (...args) => spawnSync(launcher, args, { cwd: root, env, encoding: 'utf8', timeout: 10_000 }),
     writeHooks: async data => {
       await mkdir(codexHome, { recursive: true });
@@ -187,4 +188,42 @@ test('the shared command survives removing either host and is removed with the l
     await assert.rejects(stat(f.launcher), { code: 'ENOENT' });
     assert.equal(await readFile(f.shellFile, 'utf8'), original + '\n# Added after installation\n');
   }
+});
+
+test('doctor checks local installation and configuration without creating state or printing file contents', async t => {
+  const f = await fixture(t);
+  const before = f.run(join(project, 'cli.mjs'), 'doctor');
+  assert.equal(before.status, 0, before.stderr);
+  assert.match(before.stdout, /OpenCode integration: Not installed/);
+  assert.match(before.stdout, /Codex integration: Not installed/);
+  assert.match(before.stdout, /Transcript storage: Created on first use/);
+  await assert.rejects(stat(f.stateHome), { code: 'ENOENT' });
+
+  const installed = f.run(setup, '--target', 'both');
+  assert.equal(installed.status, 0, installed.stderr);
+  const good = f.command('doctor');
+  assert.equal(good.status, 0, good.stderr);
+  assert.match(good.stdout, /OpenCode integration: OK/);
+  assert.match(good.stdout, /Codex integration: OK/);
+  assert.match(good.stdout, /Codex hooks: Registered \(trust is managed by Codex\)/);
+  assert.match(good.stdout, /Strategy configuration: OK/);
+  assert.match(good.stdout, /Candidate configuration: OK/);
+  await assert.rejects(stat(f.stateHome), { code: 'ENOENT' });
+
+  const hooks = await f.hooks();
+  delete hooks.hooks.UserPromptSubmit;
+  await f.writeHooks(hooks);
+  const config = join(f.configHome, 'fm-pcc-router');
+  await mkdir(config, { recursive: true });
+  await writeFile(join(config, 'strategies.json'), '{private diagnostic fixture');
+  await writeFile(join(config, 'routing.json'), '{private candidate fixture');
+  await mkdir(join(f.stateHome, 'fm-pcc-router/sessions'), { recursive: true, mode: 0o755 });
+  const bad = f.command('doctor');
+  assert.equal(bad.status, 0, bad.stderr);
+  assert.match(bad.stdout, /Codex hooks: Needs attention/);
+  assert.match(bad.stdout, /Strategy configuration: Needs attention/);
+  assert.match(bad.stdout, /Candidate configuration: Needs attention/);
+  assert.match(bad.stdout, /Transcript storage: Needs attention/);
+  assert.doesNotMatch(bad.stdout, /private (diagnostic|candidate) fixture/);
+  assert.deepEqual(await readdir(join(f.stateHome, 'fm-pcc-router')), ['sessions']);
 });

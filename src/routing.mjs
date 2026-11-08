@@ -1,4 +1,5 @@
 import { strategyInstructions } from './strategies.mjs';
+import { namedModels } from './routing-config.mjs';
 
 const validNumber = value => Number.isFinite(value) && value >= 0;
 const validID = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 256;
@@ -49,7 +50,7 @@ const instructions = [
   'Use only the supplied evidence. Do not solve the task, browse, read files, call tools or delegate.'
 ].join(' ');
 
-export function createRoutingRequest({ text, context = '', currentModel, catalog, nonce, preference = 'balanced', strategy }) {
+function buildRoutingRequest({ text, context = '', currentModel, catalog, nonce, preference = 'balanced', strategy }) {
   if (!validID(nonce) || !validID(preference) || typeof text !== 'string' || !text.trim()) throw new Error('Invalid routing request.');
   if (!catalog?.length) throw new Error('No eligible models are available.');
   if (typeof context !== 'string') {
@@ -65,7 +66,7 @@ export function createRoutingRequest({ text, context = '', currentModel, catalog
     id: [currentModel.id, currentModel.modelID].find(validID),
     variant: validID(currentModel.variant) ? currentModel.variant : undefined
   };
-  const body = {
+  return {
     model: 'pcc', stream: false,
     messages: [{ role: 'system', content: instructions + strategyInstructions(strategy) }, { role: 'user', content: JSON.stringify({ text, context, currentModel: model, preference, nonce, catalog }) }],
     response_format: { type: 'json_schema', json_schema: { name: 'ModelRoute', strict: true, schema: {
@@ -73,8 +74,52 @@ export function createRoutingRequest({ text, context = '', currentModel, catalog
       properties: { nonce: { type: 'string' }, route_id: { type: 'string', enum: catalog.flatMap(m => m.routes.map(r => r.route_id)) }, reason: { type: 'string' } }
     } } }
   };
-  if (Buffer.byteLength(JSON.stringify(body)) > 96 * 1024) throw new Error('Routing request exceeds the size limit.');
+}
+
+const requestBytes = body => Buffer.byteLength(JSON.stringify(body), 'utf8');
+
+export function createRoutingRequest(options) {
+  const body = buildRoutingRequest(options);
+  if (requestBytes(body) > 96 * 1024) throw new Error('Routing request exceeds the size limit.');
   return body;
+}
+
+export function fitRoutingRequest(options, { maxBytes = 24_000 } = {}) {
+  const result = catalog => ({ body: buildRoutingRequest({ ...options, catalog }), catalog });
+  const full = result(options.catalog);
+  if (requestBytes(full.body) <= maxBytes) return full;
+
+  const compact = options.catalog.map(({ name, family, status, ...model }) => model);
+  const minimal = result(compact);
+  if (requestBytes(minimal.body) <= maxBytes) return minimal;
+
+  const named = namedModels(compact, options.text);
+  const counts = new Map();
+  for (const { providerID } of named) counts.set(providerID, (counts.get(providerID) ?? 0) + 1);
+  const rounds = new Map();
+  for (const model of compact) {
+    if (named.has(model)) continue;
+    const round = counts.get(model.providerID) ?? 0;
+    if (!rounds.has(round)) rounds.set(round, []);
+    rounds.get(round).push(model);
+    counts.set(model.providerID, round + 1);
+  }
+  const priority = [...named, ...[...rounds.keys()].sort((a, b) => a - b).flatMap(round => rounds.get(round))];
+
+  // Each added model grows the payload and schema. Keep the largest prefix that fits.
+  let low = Math.max(1, named.size);
+  let high = priority.length - 1;
+  let best;
+  while (low <= high) {
+    const count = Math.floor((low + high) / 2);
+    const candidate = result(priority.slice(0, count));
+    if (requestBytes(candidate.body) <= maxBytes) {
+      best = candidate;
+      low = count + 1;
+    } else high = count - 1;
+  }
+  if (!best) throw new Error('The PCC routing input exceeds the safe context budget.');
+  return best;
 }
 
 export function parseRoutingResponse(response, catalog, nonce) {

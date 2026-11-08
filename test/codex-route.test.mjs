@@ -160,6 +160,31 @@ test('the Codex thread ID scopes routing locally and a missing ID leaves routing
   }
 });
 
+test('Codex applies the configured candidate scope before sending a route request', async (t) => {
+  const { config } = strategyFixture(t);
+  const before = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = config;
+  t.after(() => {
+    if (before === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = before;
+  });
+  writeFileSync(join(config, 'fm-pcc-router/routing.json'), JSON.stringify({ hosts: {
+    codex: { models: [{ providerID: 'codex', id: 'selected' }] },
+  } }));
+  const result = await chooseCodexRoute('Delegate this task.', {
+    strategies: defaultStrategies,
+    getModels: async () => mapCodexModels([modelData('other'), modelData('selected')]),
+    bridge: { complete: async body => {
+      const { catalog, nonce } = JSON.parse(body.messages[1].content);
+      assert.deepEqual(catalog.map(model => model.id), ['selected']);
+      return { model: 'pcc', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+        nonce, route_id: catalog[0].routes[0].route_id, reason: 'Fits the delegated task.',
+      }) } }] };
+    } },
+  });
+  assert.equal(result.model, 'selected');
+});
+
 test('routing stops before calling PCC when no explicit subagent effort is available', async () => {
   const models = mapCodexModels([{ ...modelData(), supportedReasoningEfforts: [] }]);
   await assert.rejects(chooseCodexRoute('task', {

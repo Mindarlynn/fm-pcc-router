@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCatalog, createRoutingRequest, parseRoutingResponse } from '../src/routing.mjs';
+import { buildCatalog, createRoutingRequest, parseRoutingResponse, fitRoutingRequest } from '../src/routing.mjs';
+import { applyModelScope } from '../src/routing-config.mjs';
 
 const nonce = 'current-request';
 const base = { enabled: true, type: 'chat', providerID: 'new-provider', id: 'shared', name: 'Future',
@@ -57,4 +58,46 @@ test('fails oversized tasks and catalogs without clipping', () => {
   assert.throws(() => make({ text: 'a'.repeat(100000) }), /size limit/);
   const many = buildCatalog(Array.from({ length: 1100 }, (_, i) => ({ ...base, id: 'model-' + i })));
   assert.throws(() => make({ catalog: many }), /size limit/);
+});
+
+test('candidate scope caps providers and protects an unambiguous explicit model', () => {
+  const models = buildCatalog(Array.from({ length: 4 }, (_, i) => ({ ...base, providerID: i < 2 ? 'a' : 'b', id: `m${i}` })));
+  const scoped = applyModelScope(models, { maxModelsPerProvider: 1 }, 'Please use m1 for this task.');
+  assert.deepEqual(scoped.map(m => m.id), ['m1', 'm2']);
+  assert.deepEqual(applyModelScope(models, { models: [{ providerID: 'a', id: 'm0' }] }, 'Use m1.').map(m => m.id), ['m0']);
+  assert.throws(() => applyModelScope(models, { maxModelsPerProvider: 1 }, 'Compare m0 and m1.'), /exceed maxModelsPerProvider/);
+});
+
+test('fitting compacts labels first and keeps every model when the compact request fits', () => {
+  const options = { text: 'Hi', catalog, nonce };
+  const bytes = Buffer.byteLength(JSON.stringify(createRoutingRequest(options)));
+  assert.deepEqual(fitRoutingRequest(options, { maxBytes: bytes }).catalog, catalog);
+  const fitted = fitRoutingRequest(options, { maxBytes: bytes - 1 });
+  assert.equal(fitted.catalog.length, catalog.length);
+  assert(fitted.catalog.every(model => !Object.hasOwn(model, 'name')));
+});
+
+test('even catalogs over the original request cap fit deterministically with provider coverage and exact routes', () => {
+  const models = buildCatalog(Array.from({ length: 1100 }, (_, i) => ({ ...base, providerID: i % 3 ? 'a' : 'b', id: `large-model-${i}` })));
+  const options = { text: 'Use b/large-model-1098.', catalog: models, nonce };
+  const one = fitRoutingRequest(options);
+  assert.deepEqual(one, fitRoutingRequest(options));
+  assert(one.catalog.length < models.length);
+  assert.deepEqual(new Set(one.catalog.map(model => model.providerID)), new Set(['a', 'b']));
+  assert(one.catalog.some(model => model.id === 'large-model-1098'));
+  assert(Buffer.byteLength(JSON.stringify(one.body)) <= 24_000);
+  assert.deepEqual(one.body.response_format.json_schema.schema.properties.route_id.enum,
+    one.catalog.flatMap(model => model.routes.map(route => route.route_id)));
+  assert.throws(() => fitRoutingRequest({ ...options, text: 'a'.repeat(25_000) }), /context budget/);
+});
+
+test('the shortlist fills an uncovered provider before adding another model for a named model’s provider', () => {
+  const models = buildCatalog([
+    { ...base, providerID: 'a', id: 'first' }, { ...base, providerID: 'a', id: 'named' },
+    { ...base, providerID: 'b', id: 'other' },
+  ]);
+  const options = { text: 'Use a/named.', nonce, catalog: models };
+  const compactPair = models.slice(1).map(({ name, family, status, ...model }) => model);
+  const maxBytes = Buffer.byteLength(JSON.stringify(createRoutingRequest({ ...options, catalog: compactPair })));
+  assert.deepEqual(fitRoutingRequest(options, { maxBytes }).catalog.map(model => model.id), ['named', 'other']);
 });

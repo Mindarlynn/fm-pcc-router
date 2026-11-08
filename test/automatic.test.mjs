@@ -1,8 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter, on } from 'node:events';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setImmediate as nextTick } from 'node:timers/promises';
 import { connectedScope, registerAutomaticRouter, requiredInputs, routingContext, validateOptions } from '../integrations/opencode/automatic.mjs';
+
+let config;
+const priorConfig = process.env.XDG_CONFIG_HOME;
+test.before(async () => {
+  config = await mkdtemp(join(tmpdir(), 'fm-pcc-opencode-routing-'));
+  process.env.XDG_CONFIG_HOME = config;
+});
+test.after(async () => {
+  if (priorConfig === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = priorConfig;
+  await rm(config, { recursive: true, force: true });
+});
 
 const model = (providerID, id = 'model') => ({ providerID, id, type: 'chat', name: id,
   enabled: true, capabilities: { tools: true, input: ['text', 'image', 'pdf'], output: ['text'] },
@@ -70,6 +85,28 @@ test('routes before admission using connected providers and preserves exact vari
     f.hooks.get('title')(title);
     assert.equal(title.result, event.prompt.text);
     await assert.rejects(f.hooks.get('prompt')(f.prompt('m2')), /already pending/);
+  } finally { await cleanup(); }
+});
+
+test('candidate settings narrow connected providers and invalid settings stop before PCC', async t => {
+  const f = fixture();
+  const directory = join(config, 'fm-pcc-router');
+  const file = join(directory, 'routing.json');
+  await mkdir(directory);
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, {}, f.strategies);
+  try {
+    await writeFile(file, '{broken');
+    await assert.rejects(f.hooks.get('prompt')(f.prompt()), /invalid JSON/);
+    assert.equal(f.calls.pcc.length, 0);
+    f.models.push(model('contract', 'chosen'));
+    await writeFile(file, JSON.stringify({ hosts: { opencode: { models: [
+      { providerID: 'automatic-free', id: 'model' }, { providerID: 'contract', id: 'chosen' },
+    ] } } }));
+    await f.hooks.get('prompt')(f.prompt());
+    const [{ messages }] = f.calls.pcc;
+    assert.deepEqual(JSON.parse(messages[1].content).catalog.map(({ providerID, id }) => [providerID, id]),
+      [['contract', 'chosen']]);
   } finally { await cleanup(); }
 });
 

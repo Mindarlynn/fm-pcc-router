@@ -74,6 +74,21 @@ To limit selection to specific connected providers, add this entry to the `plugi
 
 Only connected providers in this list are eligible. An empty list blocks all selection. Preserve unrelated settings and plugin entries when applying this example.
 
+## Optional model candidate limits
+
+By default, the router considers eligible models from every allowed provider. To limit the number of candidates per provider, create `~/.config/fm-pcc-router/routing.json` (under `$XDG_CONFIG_HOME` if set):
+
+```json
+{
+  "hosts": {
+    "opencode": { "maxModelsPerProvider": 12 },
+    "codex": { "maxModelsPerProvider": 12 }
+  }
+}
+```
+
+For a model allowlist, add a `models` array to either host with entries such as `{"providerID":"openai","id":"your-model-id"}`. Use the provider ID `codex` for Codex models. Omitting `models` keeps every eligible model in scope. The OpenCode provider restrictions still apply. An invalid file stops routing until it is corrected. If the request exceeds the PCC input budget, the router first removes optional labels and then balances the shortlist across providers, preserving eligible models named in the task within the configured scope.
+
 ## Routing strategies
 
 New chats use `default`, the built-in routing strategy. To define reusable strategies for either app, create `~/.config/fm-pcc-router/strategies.json` (under `$XDG_CONFIG_HOME` if set):
@@ -105,9 +120,11 @@ Strategy names use lowercase letters, digits, and hyphens, start with a letter, 
 
 Run `fm-pcc-router test` in a terminal to check PCC connectivity. The diagnostic uses a fixed probe. If it fails, check Apple Intelligence availability, PCC usage limits, and Terminal automation permission.
 
+Run `fm-pcc-router doctor` for a read-only check of installed integrations, Codex hook registration, local settings, and storage permissions. It prints status summaries without contacting PCC or showing conversation or strategy contents. Check hook trust in Codex Settings.
+
 ## Privacy
 
-For routing, OpenCode sends the current request and limited recent conversation text. Codex sends the current delegation description and any bounded history of prior delegations from the same thread. Both send eligible model metadata to Apple PCC. The router does not read attachments, repository files, or Codex transcripts. Keep sensitive content out of delegation messages and use the automatic hook only where sending task text to Apple PCC is permitted.
+For routing, OpenCode sends the current request and limited recent conversation text. Codex sends the current delegation description and any bounded history of prior delegations from the same thread. Both send eligible model metadata and the selected custom strategy's instructions, when applicable, to Apple PCC. The router does not read attachments, repository files, or Codex transcripts. Keep sensitive content out of delegation messages and use the automatic hook only where sending task text to Apple PCC is permitted.
 
 Routing records are stored locally under `$XDG_STATE_HOME/fm-pcc-router/sessions` (default `~/.local/state/fm-pcc-router/sessions`). The saved context is limited to eight entries and 6,000 UTF-8 bytes per chat. The router ignores records older than seven days. To clear all saved routing history, remove this directory while the router is idle.
 

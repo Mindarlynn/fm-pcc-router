@@ -2,6 +2,7 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PCCBridge } from './src/bridge.mjs';
+import { doctorReport } from './src/doctor.mjs';
 import { RoutingStrategies } from './src/strategies.mjs';
 
 const usage = `Usage:
@@ -9,6 +10,7 @@ const usage = `Usage:
   fm-pcc-router strategy current --chat <ref>
   fm-pcc-router strategy use <name> --chat <ref>
   fm-pcc-router test
+  fm-pcc-router doctor
   fm-pcc-router --help
 
 Chat references: codex://threads/<UUID> or opencode:<session ID>.`;
@@ -26,6 +28,7 @@ function chatIdentity(ref) {
 export async function runCLI(args, { makeBridge = () => new PCCBridge() } = {}) {
   const [command, action, ...rest] = args;
   if (args.length === 1 && command === '--help') return usage;
+  if (args.length === 1 && command === 'doctor') return doctorReport();
   if (args.length === 1 && command === 'test') {
     const bridge = makeBridge();
     try {

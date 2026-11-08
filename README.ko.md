@@ -74,6 +74,21 @@ node install.mjs
 
 목록에 있는 provider 중 연결된 provider만 사용합니다. 빈 목록은 모든 모델 선택을 차단합니다. 예시를 적용할 때 다른 설정과 기존 플러그인 항목은 유지합니다.
 
+## 모델 후보 제한 설정
+
+기본값은 허용된 모든 provider의 적격 모델을 고려합니다. Provider당 후보 수를 제한하려면 `~/.config/fm-pcc-router/routing.json`을 만듭니다. `$XDG_CONFIG_HOME`을 쓰는 경우에는 그 아래에 `fm-pcc-router/routing.json`을 둡니다.
+
+```json
+{
+  "hosts": {
+    "opencode": { "maxModelsPerProvider": 12 },
+    "codex": { "maxModelsPerProvider": 12 }
+  }
+}
+```
+
+특정 모델만 허용하려면 각 앱 설정에 `{"providerID":"openai","id":"your-model-id"}` 형태의 항목을 담은 `models` 배열을 추가합니다. Codex 모델의 provider ID는 `codex`입니다. `models`를 생략하면 적격 모델 전체가 후보 범위에 들어갑니다. OpenCode의 provider 제한은 계속 적용됩니다. 설정 파일이 잘못되면 수정할 때까지 라우팅이 중단됩니다. PCC 입력 한도를 넘으면 선택적 모델 설명을 먼저 빼고, 그래도 크면 설정 범위 안에서 요청에 명시한 적격 모델을 보존하면서 provider별 후보를 고르게 추립니다.
+
 ## 라우팅 전략
 
 새 채팅은 내장 전략인 `default`로 시작합니다. 두 앱에서 재사용할 전략을 추가하려면 `~/.config/fm-pcc-router/strategies.json`을 만듭니다. `$XDG_CONFIG_HOME`을 쓰는 경우에는 그 아래에 `fm-pcc-router/strategies.json`을 둡니다.
@@ -105,9 +120,11 @@ fm-pcc-router strategy use default --chat '<chat-ref>'
 
 터미널에서 `fm-pcc-router test`를 실행하면 고정된 진단 요청으로 PCC 연결을 확인할 수 있습니다. 실패하면 Apple Intelligence 사용 가능 여부, PCC 사용 한도, Terminal 제어 권한을 확인합니다.
 
+`fm-pcc-router doctor`는 설치된 연동, Codex 훅 등록, 로컬 설정과 저장소 권한을 읽기 전용으로 점검합니다. 대화나 전략 내용을 표시하지 않으며 PCC에 접속하지 않습니다. 훅 신뢰 여부는 Codex 설정에서 확인합니다.
+
 ## 데이터 처리
 
-OpenCode는 라우팅을 위해 현재 요청과 제한된 최근 대화 텍스트를 보냅니다. Codex는 현재 위임 설명과 같은 채팅의 제한된 최근 위임 설명을 보냅니다. 두 앱 모두 Apple PCC에 후보 모델 정보를 전달합니다. 라우터는 첨부 파일, 저장소 파일, Codex 대화 기록을 읽지 않습니다. 위임 메시지에 민감한 내용을 넣지 말고, Apple PCC로 작업 텍스트를 전송할 수 있는 환경에서 자동 훅을 사용합니다.
+OpenCode는 라우팅을 위해 현재 요청과 제한된 최근 대화 텍스트를 보냅니다. Codex는 현재 위임 설명과 같은 채팅의 제한된 최근 위임 설명을 보냅니다. 두 앱 모두 후보 모델 정보와 선택한 커스텀 전략의 지침이 있는 경우 해당 지침을 Apple PCC에 전달합니다. 라우터는 첨부 파일, 저장소 파일, Codex 대화 기록을 읽지 않습니다. 위임 메시지에 민감한 내용을 넣지 말고, Apple PCC로 작업 텍스트를 전송할 수 있는 환경에서 자동 훅을 사용합니다.
 
 라우팅 기록은 로컬의 `$XDG_STATE_HOME/fm-pcc-router/sessions`에 저장됩니다(기본값은 `~/.local/state/fm-pcc-router/sessions`). 채팅마다 최대 8개 항목과 UTF-8 6,000바이트를 보관하며, 7일이 지난 기록은 재사용하지 않습니다. 전체 라우팅 기록을 지우려면 라우터를 사용하지 않는 동안 이 디렉터리를 삭제합니다.
 

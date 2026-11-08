@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { buildCatalog, createRoutingRequest, parseRoutingResponse } from '../../src/routing.mjs';
+import { buildCatalog, fitRoutingRequest, parseRoutingResponse } from '../../src/routing.mjs';
+import { readRoutingConfig, applyModelScope } from '../../src/routing-config.mjs';
 
 const variantRef = (variant) => variant == null || variant === '' || variant === 'default' ? '' : variant;
 const sameRef = (a, b) => a?.providerID === b?.providerID && a?.id === b?.id
@@ -79,12 +80,13 @@ export async function registerAutomaticRouter(ctx, bridge, options = {}, strateg
     return connectedScope(ctx, session.location, allowedProviders);
   }
 
-  async function catalogFor(session, inputs, textBudget) {
+  async function catalogFor(session, inputs, textBudget, task = '') {
     const scope = await scopeFor(session);
     const available = rows(await ctx.model.list({ location: session.location }));
     const models = available.filter((m) => m.limit?.input === undefined || m.limit.input >= textBudget);
-    return buildCatalog(models, { allowedProviders: scope, requiredInputs: inputs,
-      minContextTokens: textBudget + 4096 });
+    const config = readRoutingConfig('opencode');
+    return applyModelScope(buildCatalog(models, { allowedProviders: scope, requiredInputs: inputs,
+      minContextTokens: textBudget + 4096 }), config, task);
   }
 
   const observe = (async () => {
@@ -144,17 +146,16 @@ export async function registerAutomaticRouter(ctx, bridge, options = {}, strateg
         const inputs = requiredInputs(files);
         const text = event.prompt.text?.trim() ? event.prompt.text : 'Select a model for an attachment-only user request.';
         const textBudget = byteLength(text) + messages.reduce((total, m) => total + byteLength(textOf(m)), 0);
-        const catalog = await catalogFor(session, inputs, textBudget);
+        const catalog = await catalogFor(session, inputs, textBudget, text);
+        if (!catalog.length) throw new Error('No eligible models are available.');
         const identity = { host: 'opencode', sessionID: event.sessionID };
         const strategy = await strategies.current(identity);
         const nonce = randomUUID();
-        const body = createRoutingRequest({ text, context: routingContext(messages),
+        const { body, catalog: fitted } = fitRoutingRequest({ text, context: routingContext(messages),
           currentModel: session.model, catalog, nonce, preference, strategy });
-        // Conservative byte budget leaves room inside PCC's context window.
-        if (byteLength(JSON.stringify(body)) > 24_000) throw new Error('The PCC routing input exceeds the safe context budget.');
         if (reservations.get(event.sessionID) !== reservation) throw new Error('The chat was deleted during routing.');
-        const route = parseRoutingResponse(await bridge.complete(body, { ...identity, messageID: event.messageID }), catalog, nonce);
-        const currentCatalog = await catalogFor(session, inputs, textBudget);
+        const route = parseRoutingResponse(await bridge.complete(body, { ...identity, messageID: event.messageID }), fitted, nonce);
+        const currentCatalog = await catalogFor(session, inputs, textBudget, text);
         const offered = currentCatalog.some((m) => m.providerID === route.model.providerID && m.id === route.model.id
           && m.routes.some((v) => variantRef(v.variant) === variantRef(route.model.variant)));
         if (!offered) throw new Error('The selected model is no longer connected, allowed, or available.');

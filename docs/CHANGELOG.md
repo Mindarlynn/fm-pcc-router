@@ -9,6 +9,9 @@
 - Validate the PCC decision before updating local state and reuse validated results for duplicate OpenCode prompt events.
 - Define reusable routing strategies in a shared local config and select one per OpenCode chat or Codex thread. New chats retain the existing default routing policy.
 - Manage strategies and check PCC connectivity through one local `fm-pcc-router` command. Management commands and their results stay outside both chats.
+- Inspect local setup and storage with the read-only `fm-pcc-router doctor` command.
+- Wait for in-flight routing on the same chat before reading its latest transcript.
+- Limit model candidates per provider or by model allowlist, and fit large catalogs to the PCC request budget.
 
 ### Installation and removal
 
@@ -17,6 +20,7 @@
 - Install one shared launcher for either host and remove it with the last integration.
 - Add the launcher directory to zsh or Bash PATH when needed and remove the managed entry with the last integration.
 - Select one or both integrations with a terminal checkbox menu. Uninstall exits immediately when neither integration is installed.
+- Retry cleanup of owned launcher and PATH entries after an interrupted uninstall, and attempt Terminal window cleanup independently of process cleanup.
 
 ### Codex routing
 
