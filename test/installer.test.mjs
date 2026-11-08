@@ -7,6 +7,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const installer = fileURLToPath(new URL('../install.mjs', import.meta.url));
+const launcher = fileURLToPath(new URL('../bin/fm-pcc-router', import.meta.url));
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'fm pcc setup test '));
@@ -14,10 +15,12 @@ async function fixture(t) {
   const source = join(root, 'source checkout');
   const command = join(source, 'install.mjs');
   const log = join(root, 'installed-targets');
-  for (const directory of ['integrations/opencode', 'integrations/codex']) {
+  const bin = join(root, 'bin');
+  for (const directory of ['bin', 'integrations/opencode', 'integrations/codex']) {
     await mkdir(join(source, directory), { recursive: true });
   }
   await copyFile(installer, command);
+  await copyFile(launcher, join(source, 'bin/fm-pcc-router'));
   await writeFile(join(source, 'integrations/opencode/manage.zsh'), [
     '#!/bin/zsh -f',
     '[[ "$1" == install ]] || exit 1',
@@ -35,9 +38,10 @@ async function fixture(t) {
   return {
     run: (args, env = {}) => spawnSync(process.execPath, [command, ...args], {
       cwd: root, encoding: 'utf8', timeout: 10_000,
-      env: { ...process.env, FM_SETUP_TEST_LOG: log, ...env },
+      env: { ...process.env, XDG_BIN_HOME: bin, FM_SETUP_TEST_LOG: log, ...env },
     }),
     targets: async () => (await readFile(log, 'utf8')).trim().split('\n'),
+    bin,
   };
 }
 
@@ -74,4 +78,29 @@ test('setup reports a partial failure and still attempts the other selected host
   assert.match(result.stderr, /install failed for opencode/);
   assert.match(result.stdout, /Installed Codex fixture/);
   assert.deepEqual(await f.targets(), ['opencode', 'codex']);
+});
+
+test('setup preserves a conflicting user command and stops before installing hosts', async t => {
+  const f = await fixture(t);
+  await mkdir(f.bin);
+  const command = join(f.bin, 'fm-pcc-router');
+  await writeFile(command, 'Unrelated user command.');
+  const result = f.run(['--target', 'both']);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /existing unowned command/);
+  assert.equal(await readFile(command, 'utf8'), 'Unrelated user command.');
+  await assert.rejects(f.targets(), { code: 'ENOENT' });
+});
+
+test('concurrent setup cannot change hosts while the shared command is locked', async t => {
+  const f = await fixture(t);
+  await mkdir(f.bin);
+  const lock = join(f.bin, '.fm-pcc-router-setup.lock');
+  assert.equal(spawnSync('/usr/bin/shlock', ['-p', String(process.pid), '-f', lock]).status, 0);
+  const result = f.run(['--target', 'both']);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Could not lock FM PCC Router setup/);
+  await assert.rejects(f.targets(), { code: 'ENOENT' });
+  await rm(lock);
+  assert.equal(f.run(['--target', 'both']).status, 0);
 });

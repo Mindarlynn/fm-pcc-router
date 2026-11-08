@@ -13,7 +13,7 @@ async function fixture(t) {
   const source = path.join(temp, 'download [with spaces]');
   const xdg = path.join(temp, 'config [preserve me]');
   await mkdir(source, { recursive: true });
-  for (const rel of ['LICENSE', 'package.json', 'src', 'integrations']) {
+  for (const rel of ['LICENSE', 'package.json', 'cli.mjs', 'src', 'integrations']) {
     await cp(path.join(project, rel), path.join(source, rel), { recursive: true });
   }
   t.after(() => rm(temp, { recursive: true, force: true }));
@@ -45,7 +45,7 @@ test('installs only the runtime into global plugins and safely repeats without c
   assert.match(installed.stdout, /Installed FM PCC Router for OpenCode/);
   assert.equal(await readFile(path.join(f.config, 'opencode.jsonc'), 'utf8'), originalJsonc);
   assert.equal(await readFile(path.join(f.plugins, 'another-plugin', 'index.js'), 'utf8'), 'export default {};\n');
-  assert.deepEqual((await readdir(f.installed)).sort(), ['.fm-pcc-router-owned', 'LICENSE', 'integrations', 'package.json', 'src']);
+  assert.deepEqual((await readdir(f.installed)).sort(), ['.fm-pcc-router-owned', 'LICENSE', 'cli.mjs', 'integrations', 'package.json', 'src']);
   assert.equal(await readFile(path.join(f.installed, 'LICENSE'), 'utf8'), await readFile(path.join(f.source, 'LICENSE'), 'utf8'));
   assert.deepEqual(await readdir(path.join(f.installed, 'integrations')), ['opencode']);
   assert.deepEqual((await readdir(path.join(f.installed, 'src'))).sort(), [

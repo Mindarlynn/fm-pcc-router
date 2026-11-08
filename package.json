@@ -15,6 +15,8 @@
     "node": ">=20"
   },
   "files": [
+    "bin",
+    "cli.mjs",
     "install.mjs",
     "integrations",
     "src",

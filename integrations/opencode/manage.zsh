@@ -7,7 +7,7 @@ readonly marker_name=".$plugin_name-owned"
 readonly marker_value="$plugin_name installer ownership marker v1"
 readonly source_dirs=(integrations integrations/opencode src)
 readonly source_files=(
-  LICENSE package.json
+  LICENSE package.json cli.mjs
   integrations/opencode/index.js integrations/opencode/manage.zsh
   integrations/opencode/automatic.mjs integrations/opencode/plugin.mjs
   src/bridge.mjs src/routing.mjs src/session.mjs src/strategies.mjs src/terminal.mjs
