@@ -18,6 +18,7 @@
     "bin",
     "cli.mjs",
     "install.mjs",
+    "installer-menu.mjs",
     "shell-path.mjs",
     "integrations",
     "src",

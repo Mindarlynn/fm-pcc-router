@@ -16,6 +16,7 @@
 - Install the Codex skill and user hooks together. Preserve existing user hooks and remove only the router's entries during uninstall.
 - Install one shared launcher for either host and remove it with the last integration.
 - Add the launcher directory to zsh or Bash PATH when needed and remove the managed entry with the last integration.
+- Select one or both integrations with a terminal checkbox menu. Uninstall exits immediately when neither integration is installed.
 
 ### Codex routing
 

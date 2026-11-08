@@ -4,25 +4,14 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
-import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { chooseTargets } from './installer-menu.mjs';
 import { updateShellPath } from './shell-path.mjs';
 
 const source = fileURLToPath(new URL('.', import.meta.url));
-const targetOptions = ['opencode', 'codex', 'both'];
+const hosts = { opencode: 'OpenCode', codex: 'Codex' };
 const usage = 'Usage: node install.mjs [--uninstall] [--target <opencode|codex|both>]';
-
-async function chooseTarget() {
-  if (!process.stdin.isTTY) throw new Error('Specify --target opencode, codex, or both.');
-  console.log('1) OpenCode\n2) Codex\n3) Both');
-  const menu = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    return targetOptions[Number((await menu.question('Choose a target [1/2/3]: ')).trim()) - 1];
-  } finally {
-    menu.close();
-  }
-}
 
 function targetDirectory(target) {
   const opencode = target === 'opencode';
@@ -49,6 +38,19 @@ function installedDirectory(target) {
     throw new Error('The installed router ownership could not be verified.');
   }
   return realpathSync(directory);
+}
+
+function inspectTargets(targets) {
+  return targets.map(id => {
+    const label = hosts[id];
+    try {
+      const installed = Boolean(installedDirectory(id));
+      return { id, label, installed, status: installed ? 'Installed' : '' };
+    } catch (error) {
+      console.error(`FM PCC Router for ${label}: ${error.message}`);
+      return { id, label, disabled: true, status: 'Unavailable' };
+    }
+  });
 }
 
 function launcherPath() {
@@ -145,9 +147,9 @@ function runTarget(target, action) {
   if (result.status !== 0) throw new Error(`The ${target} command failed.`);
 }
 
-function runTargets(target, action) {
+function runTargets(targets, action) {
   let succeeded = false;
-  for (const selected of target === 'both' ? ['opencode', 'codex'] : [target]) {
+  for (const selected of targets) {
     try {
       runTarget(selected, action);
       succeeded = true;
@@ -169,19 +171,37 @@ async function main() {
     console.log(usage);
     return;
   }
-  const target = values.target ?? await chooseTarget();
-  if (!targetOptions.includes(target)) {
+  const { target, uninstall } = values;
+  if (target !== undefined && target !== 'both' && !Object.hasOwn(hosts, target)) {
     throw new Error('Supported targets are opencode, codex, and both.');
+  }
+  let targets = !target || target === 'both' ? Object.keys(hosts) : [target];
+  if (uninstall || !target) {
+    const inspected = inspectTargets(targets);
+    const blocked = inspected.some(row => row.disabled);
+    const rows = uninstall ? inspected.filter(row => row.installed) : inspected;
+    if (rows.every(row => row.disabled)) {
+      if (blocked) process.exitCode = 1;
+      else console.log(target && target !== 'both'
+        ? `FM PCC Router for ${hosts[target]} is not installed.` : 'FM PCC Router is not installed.');
+      return;
+    }
+    if (target && blocked) process.exitCode = 1;
+    targets = target ? rows.map(row => row.id) : await chooseTargets(rows, uninstall ? 'Uninstall' : 'Install');
+    if (!targets.length) {
+      console.log('Cancelled.');
+      return;
+    }
   }
   const path = launcherPath();
   const template = readFileSync(join(source, 'bin/fm-pcc-router'));
   withSetupLock(path, values.uninstall, () => {
     if (values.uninstall) {
-      runTargets(target, 'uninstall');
+      runTargets(targets, 'uninstall');
       removeLauncher(path, template);
     } else {
       ownedLauncher(path, template);
-      if (runTargets(target, 'install')) {
+      if (runTargets(targets, 'install')) {
         installLauncher(path, template);
         configureShellPath(path);
       }

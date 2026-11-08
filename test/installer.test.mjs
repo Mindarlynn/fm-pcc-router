@@ -21,6 +21,7 @@ async function fixture(t) {
     await mkdir(join(source, directory), { recursive: true });
   }
   await copyFile(installer, command);
+  await copyFile(new URL('../installer-menu.mjs', import.meta.url), join(source, 'installer-menu.mjs'));
   await copyFile(new URL('../shell-path.mjs', import.meta.url), join(source, 'shell-path.mjs'));
   await copyFile(launcher, join(source, 'bin/fm-pcc-router'));
   await writeFile(join(source, 'integrations/opencode/manage.zsh'), [
@@ -40,7 +41,8 @@ async function fixture(t) {
   return {
     run: (args, env = {}) => spawnSync(process.execPath, [command, ...args], {
       cwd: root, encoding: 'utf8', timeout: 10_000,
-      env: { ...process.env, HOME: root, ZDOTDIR: root, SHELL: '/bin/zsh', XDG_BIN_HOME: bin, FM_SETUP_TEST_LOG: log, ...env },
+      env: { ...process.env, HOME: root, ZDOTDIR: root, SHELL: '/bin/zsh', XDG_BIN_HOME: bin,
+        XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'), FM_SETUP_TEST_LOG: log, ...env },
     }),
     targets: async () => (await readFile(log, 'utf8')).trim().split('\n'),
     bin, shellFile, root,
@@ -151,4 +153,30 @@ test('setup reports the launcher path without modifying a symlinked startup file
   assert.match(result.stderr, /Refusing to edit unsafe file/);
   assert.ok(result.stderr.includes(join(f.bin, 'fm-pcc-router')));
   assert.equal(await readFile(source, 'utf8'), original);
+});
+
+test('uninstall exits cleanly before creating setup files when neither host is installed', async t => {
+  const f = await fixture(t);
+  for (const args of [['--uninstall'], ['--uninstall', '--target', 'both']]) {
+    const result = f.run(args);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), 'FM PCC Router is not installed.');
+  }
+  await assert.rejects(readFile(f.shellFile), { code: 'ENOENT' });
+  await assert.rejects(readFile(join(f.bin, '.fm-pcc-router-setup.lock')), { code: 'ENOENT' });
+  await assert.rejects(readFile(f.bin), { code: 'ENOENT' });
+});
+
+test('uninstall reports an unowned installation and preserves its contents', async t => {
+  const f = await fixture(t);
+  const unowned = join(f.root, 'config/opencode/plugins/fm-pcc-router');
+  await mkdir(unowned, { recursive: true });
+  const file = join(unowned, 'keep');
+  await writeFile(file, 'User files.');
+  const result = f.run(['--uninstall', '--target', 'both']);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /for OpenCode: .*ownership could not be verified/);
+  assert.equal(result.stdout, '');
+  assert.equal(await readFile(file, 'utf8'), 'User files.');
+  await assert.rejects(readFile(f.bin), { code: 'ENOENT' });
 });

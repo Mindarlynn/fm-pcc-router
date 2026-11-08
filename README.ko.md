@@ -41,7 +41,7 @@ cd fm-pcc-router
 node install.mjs
 ```
 
-메뉴에서 **OpenCode**, **Codex**, **둘 다** 중에서 고릅니다. 메뉴를 건너뛰려면 `--target opencode`, `--target codex`, `--target both` 중 하나를 지정합니다. 기존 설치를 업데이트하려면 먼저 `node install.mjs --uninstall`로 해당 앱의 라우터를 제거한 뒤 설치합니다.
+방향키로 이동하고 **Space**로 앱 하나 또는 둘 다 선택한 뒤 **Enter**로 설치합니다. **Esc**로 취소할 수 있습니다. 메뉴를 건너뛰려면 `--target opencode`, `--target codex`, `--target both` 중 하나를 지정합니다. 기존 설치를 업데이트하려면 먼저 `node install.mjs --uninstall`로 해당 앱의 라우터를 제거한 뒤 설치합니다.
 
 어느 앱을 선택해도 `fm-pcc-router` 명령이 `~/.local/bin` 또는 `$XDG_BIN_HOME`에 설치됩니다. 설치 경로가 `PATH`에 없으면 설치기가 zsh 또는 Bash 시작 파일에서 `PATH` 끝에 추가합니다. 새 터미널 탭을 열면 명령을 사용할 수 있습니다. 다른 셸에서는 설치기가 전체 실행 경로를 표시합니다.
 
@@ -117,7 +117,7 @@ OpenCode는 라우팅을 위해 현재 요청과 제한된 최근 대화 텍스�
 node install.mjs --uninstall
 ```
 
-클론한 폴더에서 실행하고 제거할 앱을 고릅니다. Codex를 제거하면 설치된 스킬과 훅도 함께 제거됩니다. 마지막 앱의 연동을 제거할 때 공용 명령과 설치기가 추가한 PATH 항목도 삭제됩니다. 해당 앱을 다시 시작합니다.
+제거 메뉴에는 설치된 연동만 표시됩니다. **Space**로 선택하고 **Enter**로 제거합니다. 설치된 연동이 없으면 안내하고 종료합니다. Codex를 제거하면 설치된 스킬과 훅도 함께 제거됩니다. 마지막 앱의 연동을 제거할 때 공용 명령과 설치기가 추가한 PATH 항목도 삭제됩니다. 해당 앱을 다시 시작합니다.
 
 개발과 테스트는 [기여 안내](.github/CONTRIBUTING.md), 릴리스 내역은 [변경 기록](docs/CHANGELOG.md)을 참고하세요.
 
