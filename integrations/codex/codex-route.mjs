@@ -13,7 +13,6 @@ import { beginCodexAudit } from './codex-audit.mjs';
 export const MAX_TASK_BYTES = 24 * 1024;
 const DEFAULT_TIMEOUT_MS = 12_000;
 const MAX_PROTOCOL_BYTES = 512 * 1024;
-const MAX_HOOK_BYTES = 64 * 1024;
 const BUNDLED_CODEX = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex';
 const SUBAGENT_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 
@@ -227,43 +226,7 @@ async function readStdin() {
   return data;
 }
 
-async function readPromptSubmit() {
-  const chunks = [];
-  let bytes = 0;
-  for await (const chunk of process.stdin) {
-    bytes += chunk.length;
-    if (bytes <= MAX_HOOK_BYTES) chunks.push(chunk);
-    else chunks.length = 0;
-  }
-  if (bytes > MAX_HOOK_BYTES) return;
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return undefined; }
-}
-
-async function promptSubmitOutput(event) {
-  if (event?.hook_event_name === 'UserPromptSubmit' && typeof event.prompt === 'string') {
-    const command = /^pcc strategy (list|current|use ([^\s]+))$/.exec(event.prompt);
-    if (command?.[0] === event.prompt) {
-      const strategies = new RoutingStrategies();
-      const identity = codexIdentity(event.session_id);
-      let message;
-      try {
-        if (command[1] === 'list') {
-          message = `Available PCC strategies: ${(await strategies.list()).join(', ')}.`;
-        } else {
-          if (!identity) throw routeError('The Codex hook did not provide a chat ID.');
-          if (command[1] === 'current') {
-            message = `Current PCC strategy: ${(await strategies.current(identity)).id}.`;
-          } else {
-            await strategies.select(identity, command[2]);
-            message = `PCC strategy selected for this chat: ${command[2]}.`;
-          }
-        }
-      } catch (error) {
-        message = error instanceof Error ? error.message : 'PCC strategy command failed.';
-      }
-      return { decision: 'block', reason: 'FM PCC Router handled this strategy command locally.', systemMessage: message };
-    }
-  }
+function promptSubmitOutput() {
   const workflow = fileURLToPath(new URL('./routing.md', import.meta.url));
   const additionalContext = [
     'Apply FM PCC Router only if you are already going to create a native subagent.',
@@ -276,7 +239,9 @@ async function promptSubmitOutput(event) {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   if (process.argv[2] === '--user-prompt-submit') {
-    const output = await promptSubmitOutput(await readPromptSubmit());
+    // Drain hook input without interpreting or retaining conversation text.
+    for await (const chunk of process.stdin) { /* discard */ }
+    const output = promptSubmitOutput();
     process.stdout.write(`${JSON.stringify(output)}\n`);
   } else {
     try {

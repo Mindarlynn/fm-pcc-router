@@ -102,7 +102,6 @@ export async function registerAutomaticRouter(ctx, bridge, options = {}, strateg
           } catch {
             console.error('FM PCC Router could not remove a deleted chat’s strategy selection.');
           }
-          if (!enabled) continue;
           try {
             await bridge.forget(identity);
           } catch {
@@ -174,9 +173,6 @@ export async function registerAutomaticRouter(ctx, bridge, options = {}, strateg
       } catch (error) {
         if (reservations.get(event.sessionID) !== reservation) throw error;
         reservations.delete(event.sessionID);
-        const text = `PCC routing failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-        await ctx.session.synthetic({ sessionID: event.sessionID, text,
-          description: text.replace(/\s+/g, ' '), delivery: 'queue', resume: false }).catch(() => {});
         throw error;
       }
     }));

@@ -1,119 +1,66 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createProbePlugin } from '../integrations/opencode/plugin.mjs';
+import { createOpenCodePlugin } from '../integrations/opencode/plugin.mjs';
 
-function mockContext() {
-  const commands = [];
-  const messages = [];
-  const registrations = [];
-  return { commands, messages, registrations,
+function mockContext(enabled = false) {
+  const hooks = new Map();
+  const calls = [];
+  return { hooks, calls,
     context: {
-      options: { enabled: false },
+      options: { enabled },
       event: { async *subscribe() {} },
-      command: { transform: async (edit) => {
-        edit({ add: (definition) => commands.push(definition) });
-        const registration = { disposed: false, async dispose() { this.disposed = true; } };
-        registrations.push(registration);
-        return registration;
-      } },
-      session: { synthetic: async (message) => { messages.push(message); } },
+      command: { transform: async () => { calls.push('command'); } },
+      session: {
+        synthetic: async () => { calls.push('synthetic'); },
+        prompt: async () => { calls.push('prompt'); },
+        hook: async (name, callback) => {
+          hooks.set(name, callback);
+          return { dispose: async () => hooks.delete(name) };
+        },
+      },
     },
   };
 }
 
-test('plugin registers control commands and does not call PCC during setup', async () => {
-  const mock = mockContext();
-  let calls = 0;
+test('plugin preserves its ID and automatic hooks without chat controls or setup PCC calls', async () => {
+  const mock = mockContext(true);
   let disposed = false;
-  const plugin = createProbePlugin(() => ({
-    probe: async () => { calls++; return { model: 'pcc', ok: true, elapsedMs: 12 }; },
+  const plugin = createOpenCodePlugin(() => ({
+    probe: async () => { mock.calls.push('probe'); },
+    complete: async () => { mock.calls.push('complete'); },
     dispose: async () => { disposed = true; },
   }));
+  assert.equal(plugin.id, 'foundation-pcc-probe');
   const cleanup = await plugin.setup(mock.context);
-  assert.equal(calls, 0);
-  assert.deepEqual(mock.commands.map(({ name }) => name), ['pcc-test', 'pcc-strategy']);
-  await mock.commands[0].execute({ sessionID: 'same-chat' });
-  assert.equal(calls, 1);
-  assert.match(mock.messages[0].text, /PCC 연결 성공/);
-  assert.match(mock.messages[0].description, /model=pcc/);
-  assert.match(mock.messages[0].description, /12ms/);
-  assert.doesNotMatch(mock.messages[0].description, /\n/);
-  assert.equal(mock.messages[0].sessionID, 'same-chat');
-  assert.equal(mock.messages[0].resume, false);
-  assert.equal(mock.messages[0].delivery, 'queue');
+  assert.deepEqual([...mock.hooks.keys()], ['prompt', 'model.request', 'title']);
+  assert.deepEqual(mock.calls, []);
   await cleanup();
-  assert(disposed && mock.registrations[0].disposed);
+  assert.equal(mock.hooks.size, 0);
+  assert.equal(disposed, true);
 });
 
-test('failed probe produces failure in the same chat without resuming the model', async () => {
+test('disabled plugin works without command or synthetic APIs and adds no prompt hooks', async () => {
   const mock = mockContext();
-  const plugin = createProbePlugin(() => ({ probe: async () => { throw new Error('permission denied'); }, dispose: async () => {} }));
-  const cleanup = await plugin.setup(mock.context);
-  await mock.commands[0].execute({ sessionID: 'same-chat' });
-  assert.match(mock.messages[0].text, /PCC probe failed/);
-  assert.match(mock.messages[0].text, /permission denied/);
-  assert.match(mock.messages[0].description, /PCC probe failed.*permission denied/);
-  assert.doesNotMatch(mock.messages[0].description, /\n/);
-  assert.equal(mock.messages[0].resume, false);
+  delete mock.context.command;
+  delete mock.context.session;
+  let disposed = false;
+  const cleanup = await createOpenCodePlugin(() => ({ dispose: async () => { disposed = true; } })).setup(mock.context);
+  assert.equal(mock.hooks.size, 0);
   await cleanup();
-});
-
-test('non-Error probe failures use an English fallback', async () => {
-  const mock = mockContext();
-  const plugin = createProbePlugin(() => ({ probe: async () => { throw 'failure'; }, dispose: async () => {} }));
-  const cleanup = await plugin.setup(mock.context);
-  await mock.commands[0].execute({ sessionID: 'same-chat' });
-  assert.match(mock.messages[0].text, /PCC probe failed/);
-  assert.match(mock.messages[0].text, /Unknown error/);
-  assert.match(mock.messages[0].description, /PCC probe failed.*Unknown error/);
-  await cleanup();
-});
-
-test('strategy command reads OpenCode prompt text and responds in the invoking chat', async () => {
-  const mock = mockContext();
-  const selections = new Map();
-  const strategies = {
-    list: async () => ['default', 'fast'],
-    current: async ({ host, sessionID }) => ({ id: selections.get(`${host}:${sessionID}`) ?? 'default' }),
-    async select({ host, sessionID }, name) {
-      if (!(await this.list()).includes(name)) throw new Error(`Unknown routing strategy: ${name}.`);
-      selections.set(`${host}:${sessionID}`, name);
-    },
-  };
-  const cleanup = await createProbePlugin(() => ({ dispose: async () => {} }), () => strategies).setup(mock.context);
-  try {
-    const command = mock.commands.find(({ name }) => name === 'pcc-strategy');
-    const execute = (text, sessionID = 'chat-one') => command.execute({ sessionID, prompt: { text } });
-    await execute('list');
-    await execute('current');
-    await execute(' use   fast ');
-    await execute('current');
-    await execute('current', 'chat-two');
-    await execute('use missing');
-    await execute('use default extra');
-    await execute('use default');
-    await execute('current');
-    assert.deepEqual(mock.messages.map(({ text }) => text), [
-      'Available PCC strategies: default, fast', 'Current PCC strategy: default',
-      'Selected PCC strategy: fast', 'Current PCC strategy: fast', 'Current PCC strategy: default',
-      'PCC strategy command failed: Unknown routing strategy: missing.',
-      'Usage: /pcc-strategy list | current | use <name>', 'Selected PCC strategy: default',
-      'Current PCC strategy: default',
-    ]);
-    assert.equal(mock.messages[4].sessionID, 'chat-two');
-    assert(mock.messages.every(({ resume, delivery }) => resume === false && delivery === 'queue'));
-  } finally { await cleanup(); }
+  assert.equal(disposed, true);
 });
 
 test('registration failure releases the bridge', async () => {
+  const mock = mockContext(true);
   let disposed = false;
-  const plugin = createProbePlugin(() => ({ dispose: async () => { disposed = true; } }));
-  await assert.rejects(plugin.setup({ command: { transform: async () => { throw new Error('registration'); } }, session: { synthetic() {} } }), /registration/);
-  assert(disposed);
+  mock.context.session.hook = async () => { throw new Error('registration'); };
+  const plugin = createOpenCodePlugin(() => ({ dispose: async () => { disposed = true; } }));
+  await assert.rejects(plugin.setup(mock.context), /registration/);
+  assert.equal(disposed, true);
 });
 
 test('incompatible clients fail before constructing a bridge', async () => {
   let constructed = false;
-  await assert.rejects(createProbePlugin(() => { constructed = true; }).setup({}), /OpenCode/);
+  await assert.rejects(createOpenCodePlugin(() => { constructed = true; }).setup({}), /OpenCode/);
   assert.equal(constructed, false);
 });

@@ -62,6 +62,7 @@ test('routes before admission using connected providers and preserves exact vari
     assert.deepEqual(f.calls.pcc.map((body) => JSON.parse(body.messages[1].content).catalog.map((m) => m.providerID)), [['contract']]);
     assert.deepEqual(f.calls.identities, [{ host: 'opencode', sessionID: 's', messageID: 'm1' }]);
     assert.equal(event.prompt.text, 'Explain a simple function.');
+    assert.deepEqual(f.calls.notices, []);
     assert(event.metadata.untouched && f.session.metadata.existing);
     assert.equal(event.metadata.foundationRouter.model.variant, 'deep');
     await f.hooks.get('model.request')({ sessionID: 's', kind: 'primary', model: f.session.model });
@@ -139,14 +140,14 @@ test('deleting an idle session clears strategy selection even when transcript cl
   } finally { await cleanup(); }
 });
 
-test('deleting a session clears strategy selection while automatic routing is disabled', async () => {
+test('deleting a session clears strategy and routing state while automatic routing is disabled', async () => {
   const f = fixture();
   const cleanup = await registerAutomaticRouter(f.ctx, f.bridge, { enabled: false }, f.strategies);
   try {
     f.events.emit('event', { type: 'session.deleted', data: { sessionID: 'idle-chat' } });
     await nextTick();
     assert.deepEqual(f.calls.strategiesForgotten, [{ host: 'opencode', sessionID: 'idle-chat' }]);
-    assert.deepEqual(f.calls.forgotten, []);
+    assert.deepEqual(f.calls.forgotten, [{ host: 'opencode', sessionID: 'idle-chat' }]);
     assert.equal(f.hooks.size, 0);
   } finally { await cleanup(); }
 });
@@ -251,8 +252,7 @@ test('PCC failure never starts a model and permits a later retry', async () => {
   try {
     await assert.rejects(f.hooks.get('prompt')(f.prompt()), /PCC unavailable/);
     assert.equal(f.calls.switches.length, 0);
-    assert.match(f.calls.notices[0].description, /PCC routing failed: PCC unavailable/);
-    assert.equal(f.calls.notices[0].resume, false);
+    assert.deepEqual(f.calls.notices, []);
     fail = false;
     await f.hooks.get('prompt')(f.prompt());
     assert.equal(f.calls.switches.length, 1);

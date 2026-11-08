@@ -1,13 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { chooseCodexRoute, getCodexCatalog, mapCodexModels, validateTask } from '../integrations/codex/codex-route.mjs';
+
+import { RoutingStrategies } from '../src/strategies.mjs';
 
 const defaultStrategies = { current: async () => ({ id: 'default' }) };
 
@@ -101,8 +103,8 @@ function strategyFixture(t) {
 
 const promptEvent = (prompt, session_id) => ({ hook_event_name: 'UserPromptSubmit', prompt, session_id });
 
-test('Codex hook handles only exact commands in UserPromptSubmit JSON', (t) => {
-  const { hook } = strategyFixture(t);
+test('Codex hook emits only fixed guidance and never processes chat management commands', (t) => {
+  const { hook, state } = strategyFixture(t);
   const ordinary = hook(promptEvent('Ordinary private prompt.', 'first'));
   assert.deepEqual(Object.keys(ordinary), ['hookSpecificOutput']);
   assert.equal(ordinary.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
@@ -111,6 +113,10 @@ test('Codex hook handles only exact commands in UserPromptSubmit JSON', (t) => {
   assert.doesNotMatch(JSON.stringify(ordinary), /Ordinary private prompt/);
   for (const event of [
     'pcc strategy use fast',
+    promptEvent('pcc strategy list', 'first'),
+    promptEvent('pcc strategy current', 'first'),
+    promptEvent('pcc strategy use fast', 'first'),
+    promptEvent('pcc strategy use missing', 'first'),
     { ...promptEvent('pcc strategy use fast', 'first'), hook_event_name: 'Stop' },
     promptEvent('Please explain pcc strategy use fast', 'first'),
     promptEvent('`pcc strategy use fast`', 'first'),
@@ -118,37 +124,16 @@ test('Codex hook handles only exact commands in UserPromptSubmit JSON', (t) => {
     promptEvent('pcc strategy use fast\nDo another task.', 'first'),
     promptEvent('pcc strategy use fast ' + 'x'.repeat(64 * 1024), 'first'),
   ]) assert.deepEqual(hook(event), ordinary);
-  assert.match(hook(promptEvent('pcc strategy current', 'first')).systemMessage, /default/);
-});
-
-test('Codex hook reports commands through native output and blocks inference', (t) => {
-  const { hook, instruction } = strategyFixture(t);
-  const command = (prompt, id) => {
-    const result = hook(promptEvent(prompt, id));
-    assert.equal(result.decision, 'block');
-    assert.ok(result.reason);
-    assert.equal(result.hookSpecificOutput, undefined);
-    assert.doesNotMatch(result.systemMessage, new RegExp(instruction));
-    return result.systemMessage;
-  };
-  assert.match(command('pcc strategy list'), /default, fast/);
-  assert.match(command('pcc strategy use fast'), /did not provide a chat ID/);
-  assert.match(command('pcc strategy use fast', 'first'), /selected.*fast/);
-  assert.match(command('pcc strategy current', 'first'), /fast/);
-  assert.match(command('pcc strategy current', 'second'), /default/);
-  assert.match(command('pcc strategy use absent', 'first'), /Unknown routing strategy/);
-  assert.match(command('pcc strategy current', 'first'), /fast/);
-  assert.match(command('pcc strategy use default', 'first'), /selected.*default/);
-  assert.match(command('pcc strategy current', 'first'), /default/);
+  assert.equal(existsSync(state), false);
 });
 
 test('the Codex thread ID scopes routing locally and a missing ID leaves routing stateless', async (t) => {
-  const { config, state, instruction, hook } = strategyFixture(t);
-  assert.match(hook(promptEvent('pcc strategy use fast', 'thread-fixture-123')).systemMessage, /selected.*fast/);
+  const { config, state, instruction } = strategyFixture(t);
   const before = Object.fromEntries(['CODEX_THREAD_ID', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME'].map(key => [key, process.env[key]]));
   try {
     process.env.XDG_CONFIG_HOME = config;
     process.env.XDG_STATE_HOME = state;
+    await new RoutingStrategies().select({ host: 'codex', sessionID: 'thread-fixture-123' }, 'fast');
     for (const sessionID of ['thread-fixture-123', 'another-thread', undefined, '']) {
       if (sessionID === undefined) delete process.env.CODEX_THREAD_ID;
       else process.env.CODEX_THREAD_ID = sessionID;
