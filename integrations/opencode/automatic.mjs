@@ -67,8 +67,9 @@ export async function connectedScope(ctx, location, allowedProviders) {
   return connected;
 }
 
-export async function registerAutomaticRouter(ctx, bridge, options = {}) {
-  const { allowedProviders, preference } = validateOptions(options);
+export async function registerAutomaticRouter(ctx, bridge, options = {}, strategies) {
+  const enabled = options.enabled !== false;
+  const { allowedProviders, preference } = enabled ? validateOptions(options) : {};
   const registrations = [];
   const reservations = new Map();
   const lifetime = new AbortController();
@@ -88,15 +89,22 @@ export async function registerAutomaticRouter(ctx, bridge, options = {}) {
 
   const observe = (async () => {
     try {
-      for await (const event of ctx.event.subscribe({ signal: lifetime.signal, types: [
-        'session.execution.succeeded', 'session.execution.failed', 'session.execution.interrupted',
-        'session.inbox.cancelled', 'session.deleted',
-      ] })) {
+      const types = ['session.deleted'];
+      if (enabled) types.push('session.execution.succeeded', 'session.execution.failed',
+        'session.execution.interrupted', 'session.inbox.cancelled');
+      for await (const event of ctx.event.subscribe({ signal: lifetime.signal, types })) {
         const sid = event.data?.sessionID;
         if (event.type === 'session.deleted' && typeof sid === 'string' && sid) {
           reservations.delete(sid);
+          const identity = { host: 'opencode', sessionID: sid };
           try {
-            await bridge.forget({ host: 'opencode', sessionID: sid });
+            await strategies.forget(identity);
+          } catch {
+            console.error('FM PCC Router could not remove a deleted chat’s strategy selection.');
+          }
+          if (!enabled) continue;
+          try {
+            await bridge.forget(identity);
           } catch {
             console.error('FM PCC Router could not remove a deleted chat’s local routing state.');
           }
@@ -115,6 +123,14 @@ export async function registerAutomaticRouter(ctx, bridge, options = {}) {
     }
   })();
 
+  const stop = async () => {
+    lifetime.abort();
+    await Promise.allSettled(registrations.map((r) => r.dispose()));
+    await observe;
+    reservations.clear();
+  };
+  if (!enabled) return stop;
+
   try {
     registrations.push(await ctx.session.hook('prompt', async (event) => {
       if (eventError) throw new Error('The router event connection failed. Reload the plugin.');
@@ -130,14 +146,15 @@ export async function registerAutomaticRouter(ctx, bridge, options = {}) {
         const text = event.prompt.text?.trim() ? event.prompt.text : 'Select a model for an attachment-only user request.';
         const textBudget = byteLength(text) + messages.reduce((total, m) => total + byteLength(textOf(m)), 0);
         const catalog = await catalogFor(session, inputs, textBudget);
+        const identity = { host: 'opencode', sessionID: event.sessionID };
+        const strategy = await strategies.current(identity);
         const nonce = randomUUID();
         const body = createRoutingRequest({ text, context: routingContext(messages),
-          currentModel: session.model, catalog, nonce, preference });
+          currentModel: session.model, catalog, nonce, preference, strategy });
         // Conservative byte budget leaves room inside PCC's context window.
         if (byteLength(JSON.stringify(body)) > 24_000) throw new Error('The PCC routing input exceeds the safe context budget.');
         if (reservations.get(event.sessionID) !== reservation) throw new Error('The chat was deleted during routing.');
-        const identity = { host: 'opencode', sessionID: event.sessionID, messageID: event.messageID };
-        const route = parseRoutingResponse(await bridge.complete(body, identity), catalog, nonce);
+        const route = parseRoutingResponse(await bridge.complete(body, { ...identity, messageID: event.messageID }), catalog, nonce);
         const currentCatalog = await catalogFor(session, inputs, textBudget);
         const offered = currentCatalog.some((m) => m.providerID === route.model.providerID && m.id === route.model.id
           && m.routes.some((v) => variantRef(v.variant) === variantRef(route.model.variant)));
@@ -184,16 +201,9 @@ export async function registerAutomaticRouter(ctx, bridge, options = {}) {
       event.result = reservations.get(event.sessionID)?.title ?? 'Chat';
     }));
   } catch (error) {
-    lifetime.abort();
-    await Promise.allSettled(registrations.map((r) => r.dispose()));
-    await observe;
+    await stop();
     throw error;
   }
 
-  return async () => {
-    lifetime.abort();
-    await Promise.allSettled(registrations.map((r) => r.dispose()));
-    await observe;
-    reservations.clear();
-  };
+  return stop;
 }
