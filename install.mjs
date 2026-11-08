@@ -1,1 +1,0 @@
-import './installer/index.mjs';

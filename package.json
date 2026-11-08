@@ -1,6 +1,6 @@
 {
   "name": "fm-pcc-router",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "type": "module",
   "description": "Foundation Models PCC routing for OpenCode and Codex subagents.",
@@ -16,8 +16,8 @@
   },
   "files": [
     "bin",
-    "cli.mjs",
-    "install.mjs",
+    "install.sh",
+    "uninstall.sh",
     "installer",
     "integrations",
     "src",

@@ -40,10 +40,10 @@ The Codex helper runs when the parent requests a subagent route. When a thread I
 ```sh
 git clone https://github.com/mindarlynn/fm-pcc-router.git
 cd fm-pcc-router
-node install.mjs
+./install.sh
 ```
 
-Use the arrow keys to move, **Space** to select one or both apps, and **Enter** to install. **Esc** cancels. To skip the menu, pass `--target opencode`, `--target codex`, or `--target both`. To upgrade an existing installation, run `node install.mjs --uninstall` for the affected hosts before installing the new version.
+Use the arrow keys to move, **Space** to select one or both apps, and **Enter** to install. **Esc** cancels. To skip the menu, pass `--target opencode`, `--target codex`, or `--target both`. To upgrade an existing installation, run `./uninstall.sh` for the affected hosts before installing the new version.
 
 Either target installs `fm-pcc-router` in `~/.local/bin` (or `$XDG_BIN_HOME`). If that directory is missing from `PATH`, setup appends it in your zsh or Bash startup file. Open a new terminal tab to use the command. For other shells, setup prints the full command path.
 
@@ -133,7 +133,7 @@ Routing records are stored locally under `$XDG_STATE_HOME/fm-pcc-router/sessions
 ## Removal
 
 ```sh
-node install.mjs --uninstall
+./uninstall.sh
 ```
 
 The removal menu lists installed integrations. Select with **Space** and confirm with **Enter**. If neither integration is installed, setup reports that and exits. Codex removal also removes the installed skill and hook entries. The last integration removes the shared command and its managed PATH entry. Restart the affected apps.
