@@ -7,6 +7,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { updateShellPath } from './shell-path.mjs';
 
 const source = fileURLToPath(new URL('.', import.meta.url));
 const targetOptions = ['opencode', 'codex', 'both'];
@@ -81,7 +82,17 @@ function installLauncher(path, template) {
   } finally {
     rmSync(stage, { recursive: true, force: true });
   }
-  console.log(`Installed the shared command at '${path}'. Add its directory to PATH or run it by its full path.`);
+  console.log(`Installed the shared command at '${path}'.`);
+}
+
+function configureShellPath(path, uninstall = false) {
+  try {
+    const rc = updateShellPath(dirname(path), uninstall);
+    if (rc) console.log(`Configured PATH in '${rc}'. Open a new terminal tab to use fm-pcc-router.`);
+  } catch (error) {
+    const action = uninstall ? 'Could not clean up the PATH entry' : `Run the command at '${path}'`;
+    console.error(`FM PCC Router: ${error.message} ${action}.`);
+  }
 }
 
 function withSetupLock(path, uninstall, action) {
@@ -102,11 +113,12 @@ function withSetupLock(path, uninstall, action) {
 }
 
 function removeLauncher(path, template) {
-  if (!ownedLauncher(path, template, false)) return;
   for (const target of ['opencode', 'codex']) {
     if (lstatSync(join(targetDirectory(target), 'cli.mjs'), { throwIfNoEntry: false })?.isFile()
         && installedDirectory(target)) return;
   }
+  configureShellPath(path, true);
+  if (!ownedLauncher(path, template, false)) return;
   unlinkSync(path);
   console.log(`Removed the shared command at '${path}'.`);
 }
@@ -169,7 +181,10 @@ async function main() {
       removeLauncher(path, template);
     } else {
       ownedLauncher(path, template);
-      if (runTargets(target, 'install')) installLauncher(path, template);
+      if (runTargets(target, 'install')) {
+        installLauncher(path, template);
+        configureShellPath(path);
+      }
     }
   });
 }

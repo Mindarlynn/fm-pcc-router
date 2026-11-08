@@ -43,7 +43,7 @@ node install.mjs
 
 Choose **OpenCode**, **Codex**, or **both** when prompted. To skip the prompt, pass `--target opencode`, `--target codex`, or `--target both`. To upgrade an existing installation, run `node install.mjs --uninstall` for the affected hosts before installing the new version.
 
-Either target installs the shared `fm-pcc-router` command in `~/.local/bin` (or `$XDG_BIN_HOME`). Add that directory to `PATH` or run the command by its full path.
+Either target installs `fm-pcc-router` in `~/.local/bin` (or `$XDG_BIN_HOME`). If that directory is missing from `PATH`, setup appends it in your zsh or Bash startup file. Open a new terminal tab to use the command. For other shells, setup prints the full command path.
 
 ### After installation
 
@@ -117,7 +117,7 @@ Routing records are stored locally under `$XDG_STATE_HOME/fm-pcc-router/sessions
 node install.mjs --uninstall
 ```
 
-Run this from the checkout and choose the apps to remove. Codex removal also removes the installed skill and hook entries. The shared command is removed with the last integration. Restart the affected apps.
+Run this from the checkout and choose the apps to remove. Codex removal also removes the installed skill and hook entries. The last integration removes the shared command and its managed PATH entry. Restart the affected apps.
 
 For development and testing, see the [contribution guide](.github/CONTRIBUTING.md). See the [changelog](docs/CHANGELOG.md) for release history.
 

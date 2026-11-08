@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -10,16 +10,18 @@ const installer = fileURLToPath(new URL('../install.mjs', import.meta.url));
 const launcher = fileURLToPath(new URL('../bin/fm-pcc-router', import.meta.url));
 
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), 'fm pcc setup test '));
+  const root = await mkdtemp(join(tmpdir(), "fm pcc router's setup "));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = join(root, 'source checkout');
   const command = join(source, 'install.mjs');
   const log = join(root, 'installed-targets');
   const bin = join(root, 'bin');
+  const shellFile = join(root, '.zshrc');
   for (const directory of ['bin', 'integrations/opencode', 'integrations/codex']) {
     await mkdir(join(source, directory), { recursive: true });
   }
   await copyFile(installer, command);
+  await copyFile(new URL('../shell-path.mjs', import.meta.url), join(source, 'shell-path.mjs'));
   await copyFile(launcher, join(source, 'bin/fm-pcc-router'));
   await writeFile(join(source, 'integrations/opencode/manage.zsh'), [
     '#!/bin/zsh -f',
@@ -38,10 +40,10 @@ async function fixture(t) {
   return {
     run: (args, env = {}) => spawnSync(process.execPath, [command, ...args], {
       cwd: root, encoding: 'utf8', timeout: 10_000,
-      env: { ...process.env, XDG_BIN_HOME: bin, FM_SETUP_TEST_LOG: log, ...env },
+      env: { ...process.env, HOME: root, ZDOTDIR: root, SHELL: '/bin/zsh', XDG_BIN_HOME: bin, FM_SETUP_TEST_LOG: log, ...env },
     }),
     targets: async () => (await readFile(log, 'utf8')).trim().split('\n'),
-    bin,
+    bin, shellFile, root,
   };
 }
 
@@ -103,4 +105,50 @@ test('concurrent setup cannot change hosts while the shared command is locked', 
   await assert.rejects(f.targets(), { code: 'ENOENT' });
   await rm(lock);
   assert.equal(f.run(['--target', 'both']).status, 0);
+});
+
+test('setup appends the command directory once and a new zsh finds it', async t => {
+  const f = await fixture(t);
+  const original = '# Existing shell settings';
+  await writeFile(f.shellFile, original);
+  for (let i = 0; i < 2; i++) assert.equal(f.run(['--target', 'opencode']).status, 0);
+  const contents = await readFile(f.shellFile, 'utf8');
+  assert.ok(contents.startsWith(original + '\n'));
+  assert.equal(contents.match(/>>> FM PCC Router PATH >>>/g).length, 1);
+  const shell = spawnSync('/bin/zsh', ['-ic', '. "$ZDOTDIR/.zshrc"; command -v fm-pcc-router; printf "%s" "$PATH"'], {
+    encoding: 'utf8', env: { ...process.env, HOME: f.root, ZDOTDIR: f.root, PATH: '/usr/bin:/bin' },
+  });
+  assert.equal(shell.status, 0, shell.stderr);
+  assert.equal(shell.stdout, `${join(f.bin, 'fm-pcc-router')}\n/usr/bin:/bin:${f.bin}`);
+});
+
+test('setup leaves shell settings alone when the directory is already on PATH', async t => {
+  const f = await fixture(t);
+  const result = f.run(['--target', 'opencode'], { PATH: `/usr/bin:/bin:${f.bin}` });
+  assert.equal(result.status, 0, result.stderr);
+  await assert.rejects(readFile(f.shellFile), { code: 'ENOENT' });
+});
+
+test('Bash setup appends to the first existing login file', async t => {
+  const f = await fixture(t);
+  const profile = join(f.root, '.profile');
+  await writeFile(profile, '# Existing Bash profile\n');
+  const result = f.run(['--target', 'opencode'], { SHELL: '/bin/bash' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(await readFile(profile, 'utf8'), /^# Existing Bash profile\n\n# >>> FM PCC Router PATH >>>/);
+  await assert.rejects(readFile(f.shellFile), { code: 'ENOENT' });
+  await assert.rejects(readFile(join(f.root, '.bash_profile')), { code: 'ENOENT' });
+});
+
+test('setup reports the launcher path without modifying a symlinked startup file', async t => {
+  const f = await fixture(t);
+  const source = join(f.root, 'dotfiles.zsh');
+  const original = '# User-managed settings\n';
+  await writeFile(source, original);
+  await symlink(source, f.shellFile);
+  const result = f.run(['--target', 'opencode']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Refusing to edit unsafe file/);
+  assert.ok(result.stderr.includes(join(f.bin, 'fm-pcc-router')));
+  assert.equal(await readFile(source, 'utf8'), original);
 });

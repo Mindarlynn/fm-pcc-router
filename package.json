@@ -18,6 +18,7 @@
     "bin",
     "cli.mjs",
     "install.mjs",
+    "shell-path.mjs",
     "integrations",
     "src",
     "README.md",

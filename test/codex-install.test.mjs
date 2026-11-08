@@ -22,12 +22,14 @@ async function fixture(t) {
   const installed = join(dataHome, 'fm-pcc-router/codex');
   const binHome = join(root, 'bin');
   const launcher = join(binHome, 'fm-pcc-router');
+  const shellFile = join(root, '.zshrc');
   const env = { ...process.env, CODEX_HOME: codexHome, XDG_DATA_HOME: dataHome, XDG_CONFIG_HOME: configHome,
-    XDG_BIN_HOME: binHome, XDG_STATE_HOME: join(root, 'state'), PATH: `${dirname(process.execPath)}:${process.env.PATH}` };
+    XDG_BIN_HOME: binHome, XDG_STATE_HOME: join(root, 'state'), PATH: `${dirname(process.execPath)}:${process.env.PATH}`,
+    HOME: root, ZDOTDIR: root, SHELL: '/bin/zsh' };
   return {
     root, installed, hooksPath, configHome, dataHome, skill: join(codexHome, 'skills/fm-pcc-router'),
     openCode: join(configHome, 'opencode/plugins/fm-pcc-router'),
-    launcher,
+    launcher, shellFile,
     command: (...args) => spawnSync(launcher, args, { cwd: root, env, encoding: 'utf8', timeout: 10_000 }),
     writeHooks: async data => {
       await mkdir(codexHome, { recursive: true });
@@ -164,6 +166,8 @@ test('the shared command survives removing either host and is removed with the l
   for (const first of ['opencode', 'codex']) {
     const f = await fixture(t);
     const last = first === 'opencode' ? 'codex' : 'opencode';
+    const original = '# User settings';
+    await writeFile(f.shellFile, original);
     const setupBoth = f.run(setup, '--target', 'both');
     assert.equal(setupBoth.status, 0, setupBoth.stderr);
     const before = await stat(f.launcher);
@@ -172,11 +176,15 @@ test('the shared command survives removing either host and is removed with the l
     assert.equal((await stat(f.launcher)).ino, before.ino);
     const removeFirst = f.run(setup, '--uninstall', '--target', first);
     assert.equal(removeFirst.status, 0, removeFirst.stderr);
+    const shell = await readFile(f.shellFile, 'utf8');
+    assert.match(shell, /FM PCC Router PATH/);
+    await writeFile(f.shellFile, shell + '\n# Added after installation\n');
     const list = f.command('strategy', 'list');
     assert.equal(list.status, 0, list.stderr);
     assert.match(list.stdout, /default/);
     const removeLast = f.run(setup, '--uninstall', '--target', last);
     assert.equal(removeLast.status, 0, removeLast.stderr);
     await assert.rejects(stat(f.launcher), { code: 'ENOENT' });
+    assert.equal(await readFile(f.shellFile, 'utf8'), original + '\n# Added after installation\n');
   }
 });
