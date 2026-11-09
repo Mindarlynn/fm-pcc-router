@@ -230,7 +230,7 @@ async function readStdin() {
 function promptSubmitOutput() {
   const workflow = fileURLToPath(new URL('./routing.md', import.meta.url));
   const additionalContext = [
-    'Apply FM PCC Router only if you are already going to create a native subagent.',
+    'For automatic delegation, apply FM PCC Router only if you are already going to create a native subagent. For an explicit FM PCC Router skill request, follow the skill workflow instead.',
     'Respect explicit model or reasoning effort choices, and use your normal delegation rules.',
     `Before spawning an eligible subagent, read the PCC routing workflow at ${JSON.stringify(workflow)}.`,
     'Pass only the delegated task description to the router and supply its selected model and reasoning effort explicitly at spawn.',

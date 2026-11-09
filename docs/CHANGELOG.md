@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.2-experimental
+
+- Reuse the existing Codex PCC selection pipeline from the skill to apply a selected model and effort to the current live CLI turn and future turns of the same chat.
+- Keep the temporary execution recipe inside `SKILL.md`; install no additional helper, dependency, launcher or server.
+- Require access to the existing private Unix socket and an already enabled `step_model_switching` flag. Preserve the native subagent fallback for app sessions, missing prerequisites and rejected model compatibility.
+- Keep automatic delegation routing unchanged and let explicit skill requests follow the skill workflow.
+- Stop after uncertain or partial updates, and distinguish settings publication from observed model execution.
+- Verified on Codex CLI 0.167.0 with the feature enabled: actual PCC selection changed a live chat from GPT-6.1 Terra to GPT-6.1 Sol, and request observations confirmed the selected model in that turn and the next turn. Default disabled-feature and incompatible-model paths remain fallback cases.
+
 ## 0.5.1
 
 - Run `./install.sh` to install and `./uninstall.sh` to remove FM PCC Router. Both support `--target`.

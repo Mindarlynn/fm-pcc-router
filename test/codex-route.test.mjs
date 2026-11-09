@@ -109,6 +109,7 @@ test('Codex hook emits only fixed guidance and never processes chat management c
   assert.deepEqual(Object.keys(ordinary), ['hookSpecificOutput']);
   assert.equal(ordinary.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
   assert.match(ordinary.hookSpecificOutput.additionalContext, /only if you are already going to create a native subagent/);
+  assert.match(ordinary.hookSpecificOutput.additionalContext, /For an explicit FM PCC Router skill request, follow the skill workflow instead/);
   assert.match(ordinary.hookSpecificOutput.additionalContext, /Pass only the delegated task description/);
   assert.doesNotMatch(JSON.stringify(ordinary), /Ordinary private prompt/);
   for (const event of [

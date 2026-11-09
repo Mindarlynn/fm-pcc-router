@@ -1,9 +1,9 @@
 {
   "name": "fm-pcc-router",
-  "version": "0.5.1",
+  "version": "0.5.2-experimental",
   "private": true,
   "type": "module",
-  "description": "Foundation Models PCC routing for OpenCode and Codex subagents.",
+  "description": "Foundation Models PCC routing for OpenCode and Codex tasks.",
   "exports": {
     ".": "./integrations/opencode/index.js"
   },

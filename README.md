@@ -2,7 +2,7 @@
 
 [한국어](README.ko.md)
 
-Uses Apple Foundation Models and Private Cloud Compute (PCC) to route OpenCode requests and select the model and reasoning effort of a Codex subagent.
+Uses Apple Foundation Models and Private Cloud Compute (PCC) to route OpenCode requests and select the model and reasoning effort for Codex tasks.
 
 ## How routing works
 
@@ -26,14 +26,14 @@ OpenCode uses the current chat's recent history and keeps routing state keyed to
   <img alt="The Codex helper serializes PCC routing within a thread and returns model and effort settings for subagents that can run in parallel" src="docs/architecture-codex.png">
 </picture>
 
-The Codex helper runs when the parent requests a subagent route. When a thread ID is available, routing calls for that thread wait for each other so the next call reads the latest saved delegation history. Once each call returns its model and effort, the parent can run the subagent tasks in parallel.
+The diagram shows automatic delegation and the native subagent fallback. The same helper also selects a route for explicit skill requests, including experimental current-chat CLI switching. When a thread ID is available, routing calls for that thread wait for each other so the next call reads the latest saved task history. Once each call returns its model and effort, the parent can run delegated tasks in parallel.
 
 ## Requirements
 
 - macOS 27 or later with Apple Intelligence and PCC available.
 - Node.js 20 or later and Git.
 - OpenCode 2 desktop app and a connected provider for OpenCode routing.
-- For Codex, a session with native subagents that accept model and reasoning effort overrides. The router can use the App Server bundled with the ChatGPT desktop app.
+- For the Codex fallback, native subagents that accept model and reasoning effort overrides. Experimental direct CLI switching has the additional server prerequisites described below. The router can use the App Server bundled with the ChatGPT desktop app.
 
 ## Installation
 
@@ -52,7 +52,11 @@ Either target installs `fm-pcc-router` in `~/.local/bin` (or `$XDG_BIN_HOME`). I
 - **OpenCode** — Restart OpenCode, open your usual project, and chat as usual. The plugin selects a model and applies it automatically.
 - **Codex** — The installer adds the `fm-pcc-router` skill and registers Codex user hooks. Quit the Codex app with **Cmd+Q** and reopen it to load the new hooks. Then review and trust `UserPromptSubmit` in **Settings > Hooks**. In a new chat, ask Codex to delegate a task. The hook gives Codex routing instructions. When Codex follows them, it sends the task description to PCC and applies the chosen model and effort when it creates the subagent. Explicit settings take precedence.
 
-You can also use `$fm-pcc-router` to route one task explicitly. Trust the optional `PostModelRequest` hook to compare its selected model with the model observed in the subagent's requests.
+You can also use `$fm-pcc-router` to route one task explicitly. In **0.5.2-experimental**, the skill can apply the selected model and effort to a confirmed current CLI chat when its existing local App Server exposes a private Unix socket and already has `step_model_switching` enabled. It publishes the change to the live turn and saves it for future turns; steps captured earlier keep their settings. The first skill/PCC steps use the original model. This does not route every ordinary prompt before its first inference.
+
+The skill does not enable that flag, start a server or restart your session. Standalone CLI sessions without an accessible server, app sessions, and server-rejected model pairs use the existing native subagent fallback with the same PCC decision. An uncertain or partial update stops the task instead. Explicit model and effort choices take precedence. The execution recipe stays inside the installed skill and uses Node's standard library.
+
+Trust the optional `PostModelRequest` hook to compare the selection with observed model requests when the executing agent ID is available. Settings acknowledgements and the CLI footer do not prove model execution; missing observations are reported as unverified.
 
 The first PCC request may need macOS Terminal automation permission. The helper may also need local execution approval to start App Server and Terminal.app.
 
@@ -112,7 +116,7 @@ fm-pcc-router strategy use default --chat '<chat-ref>'
 ```
 
 - **OpenCode** — Use `opencode:<session-id>`. Run `opencode session list` from the chat's project to find its ID.
-- **Codex** — Use the `codex://threads/<id>` link copied from the chat with **Cmd+Option+L**. The selection applies to subagent routing.
+- **Codex** — Use the `codex://threads/<id>` link copied from the chat with **Cmd+Option+L**. The selection applies to the existing Codex routing pipeline, including explicit skill requests and subagent routing.
 
 Each chat keeps its own selection and transcript. The management commands run outside the chat. Editing a strategy takes effect on the next routing request. If you remove an active strategy, select another one or reset the chat to `default`.
 
@@ -126,7 +130,7 @@ Run `fm-pcc-router doctor` for a read-only check of installed integrations, Code
 
 ## Privacy
 
-For routing, OpenCode sends the current request and limited recent conversation text. Codex sends the current delegation description and any bounded history of prior delegations from the same thread. Both send eligible model metadata and the selected custom strategy's instructions, when applicable, to Apple PCC. The router does not read attachments, repository files, or Codex transcripts. Keep sensitive content out of delegation messages and use the automatic hook only where sending task text to Apple PCC is permitted.
+For routing, OpenCode sends the current request and limited recent conversation text. Codex sends the current task description and any bounded history of prior task descriptions from the same thread. Both send eligible model metadata and the selected custom strategy's instructions, when applicable, to Apple PCC. The router does not read attachments, repository files, or Codex transcripts. Keep sensitive content out of routed task descriptions and use the automatic hook only where sending task text to Apple PCC is permitted.
 
 Routing records are stored locally under `$XDG_STATE_HOME/fm-pcc-router/sessions` (default `~/.local/state/fm-pcc-router/sessions`). The saved context is limited to eight entries and 6,000 UTF-8 bytes per chat. The router ignores records older than seven days. To clear all saved routing history, remove this directory while the router is idle.
 
