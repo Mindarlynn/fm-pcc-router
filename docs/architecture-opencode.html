@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FM PCC Router for OpenCode</title>
+<title>FM PCC Router for Codex</title>
 <style>
 /* engineered-paper theme (cool near-white, one accent, mono labels)
  * All colors/fonts flow through the :root tokens — tweak tokens, not scattered values. */
@@ -82,7 +82,7 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(22px, 
 
 .scroller { overflow-x: auto; border: 1px solid var(--color-rule-2); border-radius: var(--radius-card); }
 /* CANVAS SIZE: set width/height here AND on svg.edges AND its viewBox — keep the three in sync */
-.canvas { position: relative; width: 1320px; height: 548px; background: var(--color-paper);
+.canvas { position: relative; width: 1100px; height: 340px; background: var(--color-paper);
   background-image:
     linear-gradient(var(--color-rule) 1px, transparent 1px),
     linear-gradient(90deg, var(--color-rule) 1px, transparent 1px);
@@ -142,10 +142,10 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(22px, 
 .node .role { font-family: var(--font-mono); font-size:10.5px; color: var(--color-ink-2); margin-top:3px; line-height:1.45; }
 /* veil behind label spans: crossing edges/grid fade behind text; translucent so it
    blends into group tints (a solid paper rectangle looks pasted-on inside tinted groups) */
-.node .name span, .node .role span { background: var(--color-veil); backdrop-filter: blur(1.5px);
+.node .name span, .node .role span { background: var(--color-veil);
   padding: 0 var(--space-xs); border-radius: 3px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 
-svg.edges { position:absolute; inset:0; width:1320px; height:548px; pointer-events:none; }
+svg.edges { position:absolute; inset:0; width: 1100px; height: 340px; pointer-events:none; }
 .e  { stroke: var(--color-accent); stroke-width:1.6; fill:none; }   /* primary flow */
 .n  { stroke: var(--color-neutral); stroke-width:1.4; fill:none; }  /* internal */
 path.aws { stroke: var(--color-ink); stroke-width:1.6; fill:none; }
@@ -172,44 +172,27 @@ path.aws { stroke: var(--color-ink); stroke-width:1.6; fill:none; }
 .callout h2 { font-family: var(--font-display); font-size: 13px; margin-bottom: 4px; }
 .callout p { font-family: var(--font-display); color: var(--color-ink-2); font-size: 12px; line-height: 1.55; }
 .callout code { font-family: var(--font-mono); font-size: .95em; }
-</style>
+
+.node {width:240px;}
+.node .name {font-size:17px;}
+.node .role {font-size:11px;line-height:1.6;}
+.same .tile {border:2px solid var(--color-accent);}
+.same .name {color:var(--color-accent);}
+.caption {position:absolute;left:40px;width:920px;text-align:center;font-size:12px;color:var(--color-ink-2);line-height:1.8;}
+.node .role {font-size:10px;} .tile {color-scheme:light;} </style>
 
 </head>
-<body><div class="page">
-<header class="head">
-  <div><div class="kicker">FM PCC Router / architecture</div><h1>OpenCode routing</h1></div>
-  <p class="lede">Selects an eligible provider, model, and variant for the current OpenCode session.</p>
-</header>
-<div class="scroller"><div class="canvas" role="img" aria-label="On the Mac, OpenCode supplies a prompt, limited context, and its connected provider catalog to the router. A one-shot fm respond call requests a route from Apple PCC. OpenCode applies the result in its current session and sends the inference request to the selected provider. The router reads local candidate limits and the strategy selected by CLI for the chat, and keys the bounded transcript to the chat ID.">
-<div class="group gb" style="left:24px;top:24px;width:959px;height:500px"><div class="g-label">Local macOS</div></div>
-<div class="group ga" style="left:1004px;top:24px;width:292px;height:500px"><div class="g-label">Remote services</div></div>
-<svg class="edges" viewBox="0 0 1320 548" aria-hidden="true">
+<body><div class="page"><header class="head"><div><div class="kicker">FM PCC Router / architecture</div><h1>OpenCode routing</h1></div><p class="lede">Automatic model selection for the current chat.</p></header>
+<div class="scroller"><div class="canvas" role="img" aria-label="OpenCode automatically routes prompts through its prompt hook. The shared PCC Router calls Apple PCC via fm respond, validates the selected model and variant, and updates the current chat, including in the GUI app. The selected provider runs inference.">
+<svg class="edges" viewBox="0 0 1100 340" aria-hidden="true">
 <defs><marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="context-stroke"/></marker></defs>
-<path class="e" d="M166 140 H391" marker-end="url(#ar)"/>
-<text class="el a" x="278" y="122" text-anchor="middle">chat ID + prompt context</text>
-<text class="el a" x="278" y="135" text-anchor="middle">connected routes</text>
-<path class="e" d="M459 130 H732" marker-end="url(#ar)"/>
-<text class="el a" x="596" y="107" text-anchor="middle">private transcript + schema</text>
-<text class="el a" x="596" y="122" text-anchor="middle">task + scoped catalog</text>
-<path class="e" d="M732 151 H459" marker-end="url(#ar)"/>
-<text class="el a" x="596" y="169" text-anchor="middle">route ID + nonce + reason</text>
-<path class="e" d="M800 130 H1116" marker-end="url(#ar)"/>
-<text class="el a" x="958" y="121" text-anchor="middle">routing request</text>
-<path class="e" d="M1116 151 H800" marker-end="url(#ar)"/>
-<text class="el a" x="958" y="169" text-anchor="middle">route decision</text>
-<path class="e" d="M425 232 V340" marker-end="url(#ar)"/>
-<text class="el a" x="436" y="279" text-anchor="start">provider + model + variant</text>
-<path class="n" d="M459 374 H1116" marker-start="url(#ar)" marker-end="url(#ar)"/>
-<text class="el" x="787" y="364" text-anchor="middle">inference request + result</text>
-</svg>
-<div class="node" style="left:40px;top:110px;width:184px"><div class="tile"><img src="data:image/svg+xml;base64,Cjxzdmcgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiBmaWxsPSJub25lIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgo8cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgZmlsbD0iI0ZERkNGQyIvPgo8cGF0aCBkPSJNMzIwIDIyNFYzNTJIMTkyVjIyNEgzMjBaIiBmaWxsPSIjRTZFNUU2Ii8+CjxwYXRoIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xpcC1ydWxlPSJldmVub2RkIiBkPSJNMzg0IDQxNkgxMjhWOTZIMzg0VjQxNlpNMzIwIDE2MEgxOTJWMzUySDMyMFYxNjBaIiBmaWxsPSIjMTcxODFDIi8+Cjwvc3ZnPg==" alt=""></div><div class="name"><span>OpenCode prompt hook</span></div><div class="role"><span>reads connected providers</span><br><span>and available models</span></div></div>
-<div class="node" style="left:333px;top:110px;width:184px"><div class="tile"><img src="data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjcwLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1yb3V0ZSIKICB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgd2lkdGg9IjI0IgogIGhlaWdodD0iMjQiCiAgdmlld0JveD0iMCAwIDI0IDI0IgogIGZpbGw9Im5vbmUiCiAgc3Ryb2tlPSIjM2Q0NjYwIgogIHN0cm9rZS13aWR0aD0iMS43IgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPGNpcmNsZSBjeD0iNiIgY3k9IjE5IiByPSIzIiAvPgogIDxwYXRoIGQ9Ik05IDE5aDguNWEzLjUgMy41IDAgMCAwIDAtN2gtMTFhMy41IDMuNSAwIDAgMSAwLTdIMTUiIC8+CiAgPGNpcmNsZSBjeD0iMTgiIGN5PSI1IiByPSIzIiAvPgo8L3N2Zz4K" alt=""></div><div class="name"><span>FM PCC Router</span></div><div class="role"><span>filters model candidates</span><br><span>validates selected route</span></div></div>
-<div class="node" style="left:674px;top:110px;width:184px"><div class="tile"><img src="data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjcwLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS10ZXJtaW5hbCIKICB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgd2lkdGg9IjI0IgogIGhlaWdodD0iMjQiCiAgdmlld0JveD0iMCAwIDI0IDI0IgogIGZpbGw9Im5vbmUiCiAgc3Ryb2tlPSIjM2Q0NjYwIgogIHN0cm9rZS13aWR0aD0iMS43IgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPHBhdGggZD0iTTEyIDE5aDgiIC8+CiAgPHBhdGggZD0ibTQgMTcgNi02LTYtNiIgLz4KPC9zdmc+Cg==" alt=""></div><div class="name"><span>fm respond</span></div><div class="role"><span>one-shot Terminal process</span></div></div>
-<div class="node" style="left:1058px;top:110px;width:184px"><div class="tile"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbDpzcGFjZT0icHJlc2VydmUiIHdpZHRoPSIyMDkiIGhlaWdodD0iMjU2IiB2aWV3Qm94PSIwIDAgODE0IDEwMDAiPjxwYXRoIGQ9Ik03ODguMSAzNDAuOWMtNS44IDQuNS0xMDguMiA2Mi4yLTEwOC4yIDE5MC41IDAgMTQ4LjQgMTMwLjMgMjAwLjkgMTM0LjIgMjAyLjItLjYgMy4yLTIwLjcgNzEuOS02OC43IDE0MS45LTQyLjggNjEuNi04Ny41IDEyMy4xLTE1NS41IDEyMy4xcy04NS41LTM5LjUtMTY0LTM5LjVjLTc2LjUgMC0xMDMuNyA0MC44LTE2NS45IDQwLjhzLTEwNS42LTU3LTE1NS41LTEyN0M0Ni43IDc5MC43IDAgNjYzIDAgNTQxLjhjMC0xOTQuNCAxMjYuNC0yOTcuNSAyNTAuOC0yOTcuNSA2Ni4xIDAgMTIxLjIgNDMuNCAxNjIuNyA0My40IDM5LjUgMCAxMDEuMS00NiAxNzYuMy00NiAyOC41IDAgMTMwLjkgMi42IDE5OC4zIDk5LjJ6bS0yMzQtMTgxLjVjMzEuMS0zNi45IDUzLjEtODguMSA1My4xLTEzOS4zIDAtNy4xLS42LTE0LjMtMS45LTIwLjEtNTAuNiAxLjktMTEwLjggMzMuNy0xNDcuMSA3NS44LTI4LjUgMzIuNC01NS4xIDgzLjYtNTUuMSAxMzUuNSAwIDcuOCAxLjMgMTUuNiAxLjkgMTguMSAzLjIuNiA4LjQgMS4zIDEzLjYgMS4zIDQ1LjQgMCAxMDIuNS0zMC40IDEzNS41LTcxLjN6Ii8+PC9zdmc+" alt=""></div><div class="name"><span>Apple PCC</span></div><div class="role"><span>selects an eligible route</span></div></div>
-<div class="node" style="left:316px;top:344px;width:218px"><div class="tile"><img src="data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjcwLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1yb3V0ZSIKICB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgd2lkdGg9IjI0IgogIGhlaWdodD0iMjQiCiAgdmlld0JveD0iMCAwIDI0IDI0IgogIGZpbGw9Im5vbmUiCiAgc3Ryb2tlPSIjM2Q0NjYwIgogIHN0cm9rZS13aWR0aD0iMS43IgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPGNpcmNsZSBjeD0iNiIgY3k9IjE5IiByPSIzIiAvPgogIDxwYXRoIGQ9Ik05IDE5aDguNWEzLjUgMy41IDAgMCAwIDAtN2gtMTFhMy41IDMuNSAwIDAgMSAwLTdIMTUiIC8+CiAgPGNpcmNsZSBjeD0iMTgiIGN5PSI1IiByPSIzIiAvPgo8L3N2Zz4K" alt=""></div><div class="name"><span>Apply route</span></div><div class="role"><span>switchModel in current session</span></div></div>
-<div class="node" style="left:1058px;top:344px;width:184px"><div class="tile"><img src="data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjcwLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1jbG91ZC1jb2ciCiAgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIgogIHdpZHRoPSIyNCIKICBoZWlnaHQ9IjI0IgogIHZpZXdCb3g9IjAgMCAyNCAyNCIKICBmaWxsPSJub25lIgogIHN0cm9rZT0iIzNkNDY2MCIKICBzdHJva2Utd2lkdGg9IjEuNyIKICBzdHJva2UtbGluZWNhcD0icm91bmQiCiAgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIKPgogIDxwYXRoIGQ9Im0xMC44NTIgMTkuNzcyLS4zODMuOTI0IiAvPgogIDxwYXRoIGQ9Im0xMy4xNDggMTQuMjI4LjM4My0uOTIzIiAvPgogIDxwYXRoIGQ9Ik0xMy4xNDggMTkuNzcyYTMgMyAwIDEgMC0yLjI5Ni01LjU0NGwtLjM4My0uOTIzIiAvPgogIDxwYXRoIGQ9Im0xMy41MyAyMC42OTYtLjM4Mi0uOTI0YTMgMyAwIDEgMS0yLjI5Ni01LjU0NCIgLz4KICA8cGF0aCBkPSJtMTQuNzcyIDE1Ljg1Mi45MjMtLjM4MyIgLz4KICA8cGF0aCBkPSJtMTQuNzcyIDE4LjE0OC45MjMuMzgzIiAvPgogIDxwYXRoIGQ9Ik00LjIgMTUuMWE3IDcgMCAxIDEgOS45My05Ljg1OEE3IDcgMCAwIDEgMTUuNzEgOGgxLjc5YTQuNSA0LjUgMCAwIDEgMi41IDguMiIgLz4KICA8cGF0aCBkPSJtOS4yMjggMTUuODUyLS45MjMtLjM4MyIgLz4KICA8cGF0aCBkPSJtOS4yMjggMTguMTQ4LS45MjMuMzgzIiAvPgo8L3N2Zz4K" alt=""></div><div class="name"><span>Selected provider</span></div><div class="role"><span>runs model inference</span></div></div>
-<div class="callout" style="left:55px;top:316px;width:226px"><h2>Local settings and state</h2><p><code>routing.json</code> · candidate limits<br>CLI sets strategy outside chat<br>Bounded transcript per chat<br>Save after route validation</p></div>
-</div></div>
-<div class="legend"><span><span class="sw"></span>routing</span><span><span class="sw n"></span>catalog lookup and inference</span></div>
-<div class="foot"><span>The temporary Terminal window closes after routing. A remote inference provider is shown.</span><span>icons: svgl / Lucide · made with <a href="https://github.com/caru-ini/stack-diagram" target="_blank" rel="noopener">stack-diagram</a></span></div>
-</div></body></html>
+<path class="e" d="M184 98 H496" marker-end="url(#ar)"/>
+<text class="el a" x="340" y="86" text-anchor="middle">prompt</text>
+<path class="e" d="M496 126 H184" marker-end="url(#ar)"/>
+<text class="el a" x="340" y="149" text-anchor="middle" style="font-size:10px">Update current chat model + variant</text>
+<text class="el" x="340" y="168" text-anchor="middle" style="font-size:10px">Works in the GUI app</text>
+<path class="e" d="M564 98 H896" marker-end="url(#ar)"/>
+<text class="el a" x="730" y="86" text-anchor="middle">fm respond</text>
+<path class="e" d="M896 126 H564" marker-end="url(#ar)"/>
+<text class="el a" x="730" y="149" text-anchor="middle">model + variant</text>
+</svg><div class="node" style="left:30px;top:80px"><div class="tile"><img src="data:image/svg+xml;base64,Cjxzdmcgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiBmaWxsPSJub25lIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgo8cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgZmlsbD0iI0ZERkNGQyIvPgo8cGF0aCBkPSJNMzIwIDIyNFYzNTJIMTkyVjIyNEgzMjBaIiBmaWxsPSIjRTZFNUU2Ii8+CjxwYXRoIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xpcC1ydWxlPSJldmVub2RkIiBkPSJNMzg0IDQxNkgxMjhWOTZIMzg0VjQxNlpNMzIwIDE2MEgxOTJWMzUySDMyMFYxNjBaIiBmaWxsPSIjMTcxODFDIi8+Cjwvc3ZnPg==" alt=""></div><div class="name"><span>OpenCode</span></div><div class="role"><span>Automatic routing<br>via prompt hook</span></div></div><div class="node" style="left:410px;top:80px"><div class="tile"><img src="data:image/svg+xml;base64,PCEtLSBAbGljZW5zZSBsdWNpZGUtc3RhdGljIHYxLjcwLjAgLSBJU0MgLS0+CjxzdmcKICBjbGFzcz0ibHVjaWRlIGx1Y2lkZS1yb3V0ZSIKICB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgd2lkdGg9IjI0IgogIGhlaWdodD0iMjQiCiAgdmlld0JveD0iMCAwIDI0IDI0IgogIGZpbGw9Im5vbmUiCiAgc3Ryb2tlPSIjM2Q0NjYwIgogIHN0cm9rZS13aWR0aD0iMS43IgogIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICBzdHJva2UtbGluZWpvaW49InJvdW5kIgo+CiAgPGNpcmNsZSBjeD0iNiIgY3k9IjE5IiByPSIzIiAvPgogIDxwYXRoIGQ9Ik05IDE5aDguNWEzLjUgMy41IDAgMCAwIDAtN2gtMTFhMy41IDMuNSAwIDAgMSAwLTdIMTUiIC8+CiAgPGNpcmNsZSBjeD0iMTgiIGN5PSI1IiByPSIzIiAvPgo8L3N2Zz4K" alt=""></div><div class="name"><span>PCC Router</span></div><div class="role"><span>Shared candidates · strategy<br>history · validation</span></div></div><div class="node" style="left:810px;top:80px"><div class="tile"><img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbDpzcGFjZT0icHJlc2VydmUiIHdpZHRoPSIyMDkiIGhlaWdodD0iMjU2IiB2aWV3Qm94PSIwIDAgODE0IDEwMDAiPjxwYXRoIGQ9Ik03ODguMSAzNDAuOWMtNS44IDQuNS0xMDguMiA2Mi4yLTEwOC4yIDE5MC41IDAgMTQ4LjQgMTMwLjMgMjAwLjkgMTM0LjIgMjAyLjItLjYgMy4yLTIwLjcgNzEuOS02OC43IDE0MS45LTQyLjggNjEuNi04Ny41IDEyMy4xLTE1NS41IDEyMy4xcy04NS41LTM5LjUtMTY0LTM5LjVjLTc2LjUgMC0xMDMuNyA0MC44LTE2NS45IDQwLjhzLTEwNS42LTU3LTE1NS41LTEyN0M0Ni43IDc5MC43IDAgNjYzIDAgNTQxLjhjMC0xOTQuNCAxMjYuNC0yOTcuNSAyNTAuOC0yOTcuNSA2Ni4xIDAgMTIxLjIgNDMuNCAxNjIuNyA0My40IDM5LjUgMCAxMDEuMS00NiAxNzYuMy00NiAyOC41IDAgMTMwLjkgMi42IDE5OC4zIDk5LjJ6bS0yMzQtMTgxLjVjMzEuMS0zNi45IDUzLjEtODguMSA1My4xLTEzOS4zIDAtNy4xLS42LTE0LjMtMS45LTIwLjEtNTAuNiAxLjktMTEwLjggMzMuNy0xNDcuMSA3NS44LTI4LjUgMzIuNC01NS4xIDgzLjYtNTUuMSAxMzUuNSAwIDcuOCAxLjMgMTUuNiAxLjkgMTguMSAzLjIuNiA4LjQgMS4zIDEzLjYgMS4zIDQ1LjQgMCAxMDIuNS0zMC40IDEzNS41LTcxLjN6Ii8+PC9zdmc+" alt=""></div><div class="name"><span>Apple PCC</span></div><div class="role"><span>Selects model + variant</span></div></div><div style="position:absolute;left:40px;top:264px;width:1020px;text-align:center;color:var(--color-ink-2);font-size:13px">PCC selects; the selected provider runs inference.</div></div></div><div class="foot"><span>0.5.2-experimental</span><span>icons: svgl / Lucide · made with <a href="https://github.com/caru-ini/stack-diagram">stack-diagram</a></span></div></div></body></html>

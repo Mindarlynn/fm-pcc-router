@@ -17,7 +17,7 @@ Apple Foundation Models와 Private Cloud Compute(PCC)를 이용해 OpenCode 요�
   <img alt="OpenCode가 로컬 모델 후보 제한과 채팅별 전략을 적용하고 Apple PCC가 선택한 provider와 모델로 전환하는 흐름" src="docs/architecture-opencode.png">
 </picture>
 
-OpenCode는 현재 채팅의 최근 기록을 사용하고, 라우팅 상태를 채팅별로 관리합니다. 검증된 모델은 현재 세션에 적용됩니다. 채팅을 삭제하면 해당 로컬 라우팅 기록도 삭제됩니다.
+OpenCode는 현재 채팅의 최근 기록을 사용하고, 라우팅 상태를 채팅별로 관리합니다. 검증된 모델과 variant는 GUI 앱을 포함한 현재 채팅에 적용됩니다. 서브에이전트 세션은 자동 PCC 라우팅 대상에서 제외됩니다. 채팅을 삭제하면 해당 로컬 라우팅 기록도 삭제됩니다.
 
 ### Codex
 

@@ -17,7 +17,7 @@ Both integrations apply the [local candidate limits](#optional-model-candidate-l
   <img alt="OpenCode applies local candidate limits and a chat strategy, asks Apple PCC for a route, and switches to the selected provider and model" src="docs/architecture-opencode.png">
 </picture>
 
-OpenCode uses the current chat's recent history and keeps routing state keyed to that chat. A validated route is applied to the current session. Deleting a chat clears its local routing state.
+OpenCode uses the current chat's recent history and keeps routing state keyed to that chat. A validated route updates the current chat’s model and variant, including in the GUI app. Subagent sessions are excluded from automatic PCC routing. Deleting a chat clears its local routing state.
 
 ### Codex
 
