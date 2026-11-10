@@ -23,10 +23,10 @@ OpenCode uses the current chat's recent history and keeps routing state keyed to
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-codex-dark.png">
-  <img alt="The Codex helper serializes PCC routing within a thread and returns model and effort settings for subagents that can run in parallel" src="docs/architecture-codex.png">
+  <img alt="Codex reuses PCC routing for native subagents and experimental current CLI turn and future-turn model settings" src="docs/architecture-codex.png">
 </picture>
 
-The diagram shows automatic delegation and the native subagent fallback. The same helper also selects a route for explicit skill requests, including experimental current-chat CLI switching. When a thread ID is available, routing calls for that thread wait for each other so the next call reads the latest saved task history. Once each call returns its model and effort, the parent can run delegated tasks in parallel.
+The diagram shows automatic delegation, experimental current-chat CLI switching through the explicit skill, and the native subagent fallback. All paths reuse the existing PCC selection logic. Direct mode updates the live turn, then future-turn settings through the existing local App Server; partial or uncertain updates stop without fallback. When a thread ID is available, routing calls for that thread wait for each other so the next call reads the latest saved task history. Once each call returns its model and effort, the parent can run delegated tasks in parallel.
 
 ## Requirements
 
